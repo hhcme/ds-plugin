@@ -5,7 +5,7 @@
 // - GET /api/dsh-plugin-balance/usage?days=… — cross-session token usage history (daily series + day×hour heatmap)
 
 export const name = 'dsh-plugin-balance'
-export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'sessionQuery']
+export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'sessionQuery', 'sessionPersistence']
 
 const BALANCE_PATH = '/api/dsh-plugin-balance/balance'
 const GIT_PATH = '/api/dsh-plugin-balance/git'
@@ -114,14 +114,15 @@ async function fetchUsage(ctx, days) {
   const records = await ctx.sessionQuery.listSessions()
   for (const rec of records) {
     // listSessions returns { header, live, persisted } records — the id lives
-    // on the header. readSession() is the live-preferred full read: its
-    // snapshotSessionEvent clones keep `data`, unlike listEvents() which
-    // returns lightweight { sessionId, seq, type, time, surface } records
-    // with the payload stripped (aggregation would always be zero).
+    // on the header. sessionPersistence.readFrom reads the raw event log with
+    // no replay and no double cloning, unlike sessionQuery.readSession which
+    // replays + deep-clones every event of every session and stalls the
+    // request for tens of seconds on large logs (and listEvents strips data).
+    if (rec == null || rec.header == null || rec.persisted !== true) continue
     let events
     try {
-      const snap = await ctx.sessionQuery.readSession(rec != null && rec.header != null ? rec.header.id : undefined)
-      events = snap != null ? snap.events : undefined
+      const read = await ctx.sessionPersistence.readFrom(rec.header.id, 0)
+      events = read != null ? read.events : undefined
     } catch {
       continue
     }

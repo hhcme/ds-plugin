@@ -43,6 +43,34 @@ window.__ModuleLoader__.load({
     function pad2(n) {
       return (n < 10 ? "0" : "") + n;
     }
+    function mdShort(date) {
+      if (date == null || date.length < 10) return "";
+      var m = parseInt(date.slice(5, 7), 10);
+      var d = parseInt(date.slice(8, 10), 10);
+      return m + "/" + d;
+    }
+    // Zero-filled skeletons: while the first fetch is in flight the charts
+    // render these placeholders instead of a loading state, so the page
+    // never looks stuck (and an all-zero answer renders the same shapes).
+    function zeroUsageSeries(span) {
+      var out = [];
+      var now = Date.now();
+      for (var i = span - 1; i >= 0; i--) {
+        var t = new Date(now - i * 86400000);
+        out.push({ date: t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate()), input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 });
+      }
+      return out;
+    }
+    function zeroUsageGrid(span) {
+      var out = [];
+      var now = Date.now();
+      for (var d = 0; d < span; d++) {
+        var t = new Date(now - (span - 1 - d) * 86400000);
+        var dk = t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate());
+        for (var h = 0; h < 24; h++) out.push({ day: d, hour: h, date: dk, total: 0 });
+      }
+      return out;
+    }
 
     // Official checklist paths (IconChecklistOutline14) inlined so the bundle
     // needs no extra module-graph rows.
@@ -646,7 +674,9 @@ window.__ModuleLoader__.load({
       var data = props.data || [];
       var max = 0;
       for (var i = 0; i < data.length; i++) if (data[i].total > max) max = data[i].total;
-      var labelEvery = Math.max(1, Math.ceil(span / 7));
+      // Days flow horizontally (one column per day); label every day for the
+      // 7/14-day windows, every second day for the wide 30-day window.
+      var labelEvery = span > 14 ? 2 : 1;
       var rows = [];
       for (var h = 0; h < 24; h++) {
         var cells = [];
@@ -677,8 +707,8 @@ window.__ModuleLoader__.load({
       var colLabels = [];
       for (var d2 = 0; d2 < span; d2++) {
         var head = data[d2 * 24 + 12];
-        colLabels.push(React.createElement("div", { key: d2, style: { width: "14px", flexShrink: 0, textAlign: "center", fontSize: "9.5px", color: T.tertiary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } },
-          d2 % labelEvery === 0 && head != null ? head.date.slice(5) : ""));
+        colLabels.push(React.createElement("div", { key: d2, style: { width: "14px", flexShrink: 0, textAlign: "center", fontSize: "9px", color: T.tertiary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } },
+          d2 % labelEvery === 0 && head != null ? mdShort(head.date) : ""));
       }
       return React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement("div", { style: { display: "inline-block" } },
@@ -766,43 +796,40 @@ window.__ModuleLoader__.load({
         }, React.createElement(RefreshIcon, { size: 14 })),
       );
 
-      var body = null;
-      if (st.status === "loading") {
-        body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.tertiary }) }, "\u2026");
-      } else if (st.status === "error") {
-        body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.error }) },
+      // Always render the full layout — summary cards, bar chart, heatmap.
+      // While the first fetch is in flight (or when the answer is all zeros)
+      // the charts show zero-filled placeholders, never a bare loading glyph.
+      var ready = st.status === "ready" && st.data != null && st.data.ok;
+      var data = ready ? st.data : null;
+      var series = ready ? (data.series || []) : zeroUsageSeries(span);
+      var grid = ready ? (data.heatmap || []) : zeroUsageGrid(span);
+      var summary = ready ? data.summary : { total: 0, avgPerDay: 0, activeDays: 0, sessionCount: 0 };
+      var max = 0;
+      for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
+      var barSub = barHover != null && series[barHover] != null
+        ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u5171 " + fmt(series[barHover].total)
+        : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
+      var heatSub = heatHover != null
+        ? heatHover.date + " " + pad2(heatHover.hour) + ":00 \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
+        : "\u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
+      var body = st.status === "error"
+        ? React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.error }) },
           React.createElement("div", null, "\u52a0\u8f7d\u5931\u8d25\uff1a" + st.error),
           React.createElement("button", {
             type: "button",
             onClick: function () { usageCache.at = 0; setNonce(nonce + 1); },
             style: { marginTop: "10px", background: T.hoverBg, color: T.label, border: "none", borderRadius: "8px", padding: "4px 12px", cursor: "pointer", fontSize: "11px", font: "inherit" },
           }, "\u70b9\u51fb\u91cd\u8bd5"),
+        )
+        : React.createElement("div", null,
+          React.createElement(UsageSummaryCards, { summary: summary, span: span }),
+          React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
+            React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
+          ),
+          React.createElement(UsageChartCard, { title: "\u65f6\u6bb5\u70ed\u529b\u56fe", subtitle: heatSub },
+            React.createElement(UsageHeatmap, { span: span, data: grid, hover: heatHover, onHover: setHeatHover }),
+          ),
         );
-      } else if (st.data != null && st.data.ok) {
-        var data = st.data;
-        var series = data.series || [];
-        var max = 0;
-        for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
-        if (data.summary != null && data.summary.total <= 0) {
-          body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "32px", textAlign: "center", color: T.tertiary }) }, "\u6682\u65e0\u7528\u91cf\u6570\u636e");
-        } else {
-          var barSub = barHover != null && series[barHover] != null
-            ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u5171 " + fmt(series[barHover].total)
-            : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
-          var heatSub = heatHover != null
-            ? heatHover.date + " " + pad2(heatHover.hour) + ":00 \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
-            : "\u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
-          body = React.createElement("div", null,
-            React.createElement(UsageSummaryCards, { summary: data.summary, span: span }),
-            React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
-              React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
-            ),
-            React.createElement(UsageChartCard, { title: "\u65f6\u6bb5\u70ed\u529b\u56fe", subtitle: heatSub },
-              React.createElement(UsageHeatmap, { span: span, data: data.heatmap, hover: heatHover, onHover: setHeatHover }),
-            ),
-          );
-        }
-      }
 
       return React.createElement("div", { style: pageWrapStyle },
         head,
