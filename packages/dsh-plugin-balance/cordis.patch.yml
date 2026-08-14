@@ -1,0 +1,5 @@
+# dsh-plugin-balance bundle patch — one insert: this package's host half.
+# Applied as a layer over the profile tree; the row id is addressable by later patches.
+- insert:
+    - id: plugin-balance
+      name: 'dsh-plugin-balance'

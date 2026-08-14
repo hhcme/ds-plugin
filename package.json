@@ -1,0 +1,7 @@
+{
+  "name": "ds-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Persistent DSH plugin monorepo: one package per plugin, installed into the web profile via `dsh plugin --profile web add <path>`.",
+  "type": "module"
+}

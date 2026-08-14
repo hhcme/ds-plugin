@@ -1,0 +1,25 @@
+{
+  "name": "dsh-plugin-balance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex-style floating task panel: balance, token usage, git status, goal and todo progress in one dark corner-anchored card.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  }
+}
