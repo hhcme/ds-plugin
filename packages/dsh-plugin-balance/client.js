@@ -4,7 +4,10 @@
 // the top-right, growing out of a corner checklist icon that never moves between the
 // expanded and collapsed states. Content sits below the top divider. Module order:
 // 用量与余额 → Git → 任务 (→ 目标). Data values are right-aligned; collapsible bodies
-// animate their height. The shipped todo/goal/stats dock cells are replaced (migrated).
+// animate their height. The shipped todo/goal/stats dock cells are shadowed (migrated):
+// same id re-registered at priority -10 — the slot registry treats same id + same
+// priority as a hard error and renders the lowest priority ("lowest renders");
+// `order` is only an intra-priority sort key and plays no part in shadowing.
 window.__ModuleLoader__.load({
   id: "dsh-plugin-balance",
   factory: function (require) {

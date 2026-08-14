@@ -43,6 +43,7 @@ ds-plugin/
 - Host 半部：`export { name, inject, apply }`（ESM），完整 Node 环境，`fetch` 可用。
 - 浏览器半部：`client.js` 必须是 external classic-script 格式（`window.__ModuleLoader__.load({ id: 包名, factory })`），`require("react")` 走客户端模块图；UI 注册到查询过的 Slot；`inject: ["slots", "timer"]` 这类服务注入按需声明。
 - Host↔Client 通信走 host 注册的同源 HTTP 路由（`webServer.register`）+ 浏览器 `fetch`，不要用动态插件专用的 `harness.handle`/`host.call`。
+- Slot 覆盖（shadow）规范：遮蔽自带条目时用**相同 id + 更低 `priority`**（最低者渲染）；同 id 同 priority 是硬错误。`order` 仅是同 priority 内的排序字段，不参与冲突判定——不要拿它当优先级用。
 
 ## 现有插件
 
