@@ -14,6 +14,13 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     var React = require("react");
+    // The Cordis apply context is ONLY a parameter of apply(); this factory
+    // function has no `ctx` in scope. Components defined here that need
+    // lifecycle timers (ctx.interval / ctx.timeout mixins) read the captured
+    // context below instead — a module-scope bare `ctx` throws ReferenceError
+    // at mount, the slot renderer catches it and ABDICATES the entry for the
+    // rest of its registration's life (panel silently never renders).
+    var runtime = null;
 
     var BALANCE_PATH = "/api/dsh-plugin-balance/balance";
     var GIT_PATH = "/api/dsh-plugin-balance/git";
@@ -300,7 +307,7 @@ window.__ModuleLoader__.load({
             });
         }
         tick();
-        var stop = ctx.interval(tick, 60000);
+        var stop = runtime.interval(tick, 60000);
         return function () { alive = false; stop(); };
       }, []);
       var value = "\u2026";
@@ -374,7 +381,7 @@ window.__ModuleLoader__.load({
             });
         }
         tick();
-        var stop = ctx.interval(tick, 60000);
+        var stop = runtime.interval(tick, 60000);
         return function () { alive = false; stop(); };
       }, [sessionId]);
       if (sessionId == null) return null;
@@ -534,7 +541,7 @@ window.__ModuleLoader__.load({
       function collapse() {
         if (closing) return;
         setClosing(true);
-        ctx.timeout(function () {
+        runtime.timeout(function () {
           setCollapsed(true);
           setClosing(false);
         }, 350);
@@ -557,6 +564,7 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      runtime = ctx;
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
       if (typeof document !== "undefined" && document.querySelector("style[data-plugin=dsh-plugin-balance]") == null) {
         var tag = document.createElement("style");
