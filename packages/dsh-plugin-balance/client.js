@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
 
     var BALANCE_PATH = "/api/dsh-plugin-balance/balance";
     var GIT_PATH = "/api/dsh-plugin-balance/git";
+    var USAGE_PATH = "/api/dsh-plugin-balance/usage";
     var inject = ["slots", "timer"];
 
     // 60s TTL caches: a value fetched within the last minute is reused in ANY
@@ -34,6 +35,13 @@ window.__ModuleLoader__.load({
     };
     function fresh(at) {
       return at > 0 && (Date.now() - at) < 60000;
+    }
+    // Same 60s-TTL idea for the usage-history payload; the span it was
+    // computed for is part of the cache key so switching 7/14/30 days
+    // refetches instead of showing a stale window.
+    var usageCache = { at: 0, span: 0, payload: null };
+    function pad2(n) {
+      return (n < 10 ? "0" : "") + n;
     }
 
     // Official checklist paths (IconChecklistOutline14) inlined so the bundle
@@ -563,6 +571,250 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // =========================================================================
+    // Settings → 使用情况: cross-session token history rendered as summary
+    // cards, a stacked daily bar chart and a day×hour heatmap. All charts are
+    // hand-rolled divs (no chart library exists in the module graph).
+    // =========================================================================
+
+    var cardStyle2 = { background: T.bg, border: T.border, borderRadius: "12px", padding: "14px", color: T.secondary };
+    var pageWrapStyle = { maxWidth: "720px", fontFamily: T.font, fontSize: "12px", lineHeight: "18px", color: T.secondary };
+
+    function UsageSummaryCards(props) {
+      var s = props.summary;
+      var cards = [
+        { label: "\u603b Token", value: fmt(s.total) },
+        { label: "\u65e5\u5747", value: fmt(s.avgPerDay) },
+        { label: "\u6d3b\u8dc3\u5929\u6570", value: s.activeDays + " / " + props.span },
+        { label: "\u4f1a\u8bdd\u6570", value: String(s.sessionCount) },
+      ];
+      return React.createElement("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
+        cards.map(function (c) {
+          return React.createElement("div", { key: c.label, style: { flex: "1 1 130px", minWidth: "130px", background: T.bg, border: T.border, borderRadius: "12px", padding: "10px 14px" } },
+            React.createElement("div", { style: { fontSize: "11px", color: T.tertiary, fontWeight: "600" } }, c.label),
+            React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: T.label, marginTop: "2px", fontVariantNumeric: "tabular-nums" } }, c.value),
+          );
+        }),
+      );
+    }
+
+    function UsageBarChart(props) {
+      var series = props.series || [];
+      var max = 0;
+      for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
+      var labelEvery = Math.max(1, Math.ceil(series.length / 7));
+      var bars = series.map(function (d, i) {
+        var hPct = max > 0 ? Math.round((d.total / max) * 100) : 0;
+        var outPct = d.total > 0 ? Math.round((d.output / d.total) * 100) : 0;
+        var isHover = props.hover === i;
+        return React.createElement("div", {
+          key: d.date,
+          style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" },
+          onMouseEnter: function () { props.onHover(i); },
+          onMouseLeave: function () { props.onHover(null); },
+        },
+          React.createElement("div", {
+            title: d.date + " \u5171 " + fmt(d.total) + " \u00b7 \u8f93\u5165 " + fmt(d.input) + " \u00b7 \u8f93\u51fa " + fmt(d.output) + " \u00b7 \u63a8\u7406 " + fmt(d.reasoning) + " \u00b7 \u6b65 " + d.steps,
+            style: {
+              height: hPct > 0 ? Math.max(2, hPct) + "%" : "2px",
+              margin: "0 3px",
+              display: "flex", flexDirection: "column", justifyContent: "flex-end",
+              borderRadius: "4px 4px 0 0", overflow: "hidden", cursor: "default",
+              background: d.total > 0 ? (isHover ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)") : "rgba(255,255,255,0.05)",
+              boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
+            },
+          },
+            d.total > 0 ? React.createElement(React.Fragment, null,
+              React.createElement("div", { style: { height: (100 - outPct) + "%", background: T.brand, opacity: 0.9 } }),
+              React.createElement("div", { style: { height: outPct + "%", background: T.success } }),
+            ) : null,
+          ),
+        );
+      });
+      var labels = series.map(function (d, i) {
+        return React.createElement("div", { key: d.date, style: { flex: "1 1 0", minWidth: 0, textAlign: "center", fontSize: "10px", color: T.tertiary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden" } },
+          i % labelEvery === 0 ? d.date.slice(5) : "",
+        );
+      });
+      return React.createElement("div", null,
+        React.createElement("div", { style: { height: "168px", display: "flex", alignItems: "flex-end" } }, bars),
+        React.createElement("div", { style: { display: "flex", marginTop: "6px" } }, labels),
+        React.createElement("div", { style: { display: "flex", gap: "14px", marginTop: "8px", fontSize: "10.5px", color: T.tertiary, flexWrap: "wrap" } },
+          React.createElement("span", { style: { display: "flex", alignItems: "center", gap: "5px" } }, React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: T.brand, opacity: 0.9 } }), "\u8f93\u5165"),
+          React.createElement("span", { style: { display: "flex", alignItems: "center", gap: "5px" } }, React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: T.success } }), "\u8f93\u51fa"),
+        ),
+      );
+    }
+
+    function UsageHeatmap(props) {
+      var span = props.span;
+      var data = props.data || [];
+      var max = 0;
+      for (var i = 0; i < data.length; i++) if (data[i].total > max) max = data[i].total;
+      var labelEvery = Math.max(1, Math.ceil(span / 7));
+      var rows = [];
+      for (var h = 0; h < 24; h++) {
+        var cells = [];
+        for (var d = 0; d < span; d++) {
+          var cell = data[d * 24 + h] || { day: d, hour: h, date: "", total: 0 };
+          var active = cell.total > 0;
+          var isHover = props.hover != null && props.hover.day === d && props.hover.hour === h;
+          var a = max > 0 ? Math.log1p(cell.total) / Math.log1p(max) : 0;
+          var alpha = 0.07 + a * 0.93;
+          cells.push(React.createElement("div", {
+            key: d,
+            title: cell.date + " " + pad2(h) + ":00 \u00b7 " + (active ? fmt(cell.total) + " tokens" : "\u65e0\u6d88\u8017"),
+            onMouseEnter: function () { props.onHover({ day: d, hour: h, date: cell.date, total: cell.total }); },
+            onMouseLeave: function () { props.onHover(null); },
+            style: {
+              width: "12px", height: "12px", flexShrink: 0, borderRadius: "2px", margin: "1px",
+              background: active ? "rgba(77, 141, 255, " + alpha.toFixed(3) + ")" : "rgba(255,255,255,0.05)",
+              boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
+            },
+          }));
+        }
+        rows.push(React.createElement("div", { key: h, style: { display: "flex", alignItems: "center" } },
+          React.createElement("div", { style: { width: "32px", flexShrink: 0, textAlign: "right", paddingRight: "6px", fontSize: "9.5px", color: T.tertiary, fontVariantNumeric: "tabular-nums" } },
+            h % 6 === 0 ? pad2(h) + ":00" : ""),
+          React.createElement("div", { style: { display: "flex" } }, cells),
+        ));
+      }
+      var colLabels = [];
+      for (var d2 = 0; d2 < span; d2++) {
+        var head = data[d2 * 24 + 12];
+        colLabels.push(React.createElement("div", { key: d2, style: { width: "14px", flexShrink: 0, textAlign: "center", fontSize: "9.5px", color: T.tertiary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } },
+          d2 % labelEvery === 0 && head != null ? head.date.slice(5) : ""));
+      }
+      return React.createElement("div", { style: { overflowX: "auto" } },
+        React.createElement("div", { style: { display: "inline-block" } },
+          rows,
+          React.createElement("div", { style: { display: "flex", paddingLeft: "32px", marginTop: "4px" } }, colLabels),
+        ),
+      );
+    }
+
+    function UsageChartCard(props) {
+      return React.createElement("div", { style: Object.assign({}, cardStyle2, { marginTop: "12px" }) },
+        React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "12px" } },
+          React.createElement("span", { style: { fontSize: "13px", fontWeight: "700", color: T.label } }, props.title),
+          React.createElement("span", { style: { fontSize: "11px", color: T.tertiary, flex: "1", textAlign: "right", fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, props.subtitle),
+        ),
+        props.children,
+      );
+    }
+
+    function SettingsUsageSection() {
+      var spanRef = React.useState(14);
+      var span = spanRef[0];
+      var setSpan = spanRef[1];
+      var stRef = React.useState({ status: "loading", data: null, error: null });
+      var st = stRef[0];
+      var setSt = stRef[1];
+      var nonceRef = React.useState(0);
+      var nonce = nonceRef[0];
+      var setNonce = nonceRef[1];
+      var barHoverRef = React.useState(null);
+      var barHover = barHoverRef[0];
+      var setBarHover = barHoverRef[1];
+      var heatHoverRef = React.useState(null);
+      var heatHover = heatHoverRef[0];
+      var setHeatHover = heatHoverRef[1];
+      React.useEffect(function () {
+        var alive = true;
+        function tick() {
+          var c = usageCache;
+          if (c.span === span && fresh(c.at) && c.payload != null) {
+            if (alive) setSt({ status: "ready", data: c.payload, error: null });
+            return;
+          }
+          fetch(USAGE_PATH + "?days=" + span)
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              if (res != null && res.ok) {
+                usageCache.at = Date.now();
+                usageCache.span = span;
+                usageCache.payload = res;
+                if (alive) setSt({ status: "ready", data: res, error: null });
+              } else {
+                if (alive) setSt({ status: "error", data: null, error: (res != null && res.error) || "load failed" });
+              }
+            })
+            .catch(function (error) {
+              if (alive) setSt({ status: "error", data: null, error: String(error && error.message ? error.message : error) });
+            });
+        }
+        setSt({ status: "loading", data: null, error: null });
+        tick();
+        var stop = runtime.interval(tick, 60000);
+        return function () { alive = false; stop(); };
+      }, [span, nonce]);
+
+      var head = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" } },
+        React.createElement("span", { style: { fontSize: "15px", fontWeight: "700", color: T.label, flex: "1" } }, "\u4f7f\u7528\u60c5\u51b5"),
+        [7, 14, 30].map(function (n) {
+          var on = span === n;
+          return React.createElement("button", {
+            key: n, type: "button",
+            onClick: function () { setSpan(n); },
+            style: {
+              border: "1px solid " + (on ? T.borderStrong : "rgba(255,255,255,0.10)"),
+              background: on ? T.hoverBg : "transparent",
+              color: on ? T.label : T.tertiary,
+              borderRadius: "999px", padding: "2px 10px", fontSize: "11px", cursor: "pointer", font: "inherit",
+            },
+          }, n + " \u5929");
+        }),
+        React.createElement("button", {
+          type: "button", title: "\u5237\u65b0",
+          onClick: function () { usageCache.at = 0; setNonce(nonce + 1); },
+          style: { border: "none", background: "transparent", color: T.tertiary, cursor: "pointer", padding: "4px", borderRadius: "6px", display: "grid", placeItems: "center" },
+        }, React.createElement(RefreshIcon, { size: 14 })),
+      );
+
+      var body = null;
+      if (st.status === "loading") {
+        body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.tertiary }) }, "\u2026");
+      } else if (st.status === "error") {
+        body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.error }) },
+          React.createElement("div", null, "\u52a0\u8f7d\u5931\u8d25\uff1a" + st.error),
+          React.createElement("button", {
+            type: "button",
+            onClick: function () { usageCache.at = 0; setNonce(nonce + 1); },
+            style: { marginTop: "10px", background: T.hoverBg, color: T.label, border: "none", borderRadius: "8px", padding: "4px 12px", cursor: "pointer", fontSize: "11px", font: "inherit" },
+          }, "\u70b9\u51fb\u91cd\u8bd5"),
+        );
+      } else if (st.data != null && st.data.ok) {
+        var data = st.data;
+        var series = data.series || [];
+        var max = 0;
+        for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
+        if (data.summary != null && data.summary.total <= 0) {
+          body = React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "32px", textAlign: "center", color: T.tertiary }) }, "\u6682\u65e0\u7528\u91cf\u6570\u636e");
+        } else {
+          var barSub = barHover != null && series[barHover] != null
+            ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u5171 " + fmt(series[barHover].total)
+            : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
+          var heatSub = heatHover != null
+            ? heatHover.date + " " + pad2(heatHover.hour) + ":00 \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
+            : "\u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
+          body = React.createElement("div", null,
+            React.createElement(UsageSummaryCards, { summary: data.summary, span: span }),
+            React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
+              React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
+            ),
+            React.createElement(UsageChartCard, { title: "\u65f6\u6bb5\u70ed\u529b\u56fe", subtitle: heatSub },
+              React.createElement(UsageHeatmap, { span: span, data: data.heatmap, hover: heatHover, onHover: setHeatHover }),
+            ),
+          );
+        }
+      }
+
+      return React.createElement("div", { style: pageWrapStyle },
+        head,
+        body,
+      );
+    }
+
     function apply(ctx) {
       runtime = ctx;
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
@@ -584,6 +836,9 @@ window.__ModuleLoader__.load({
       ctx.slots.inject("conversation.composer.dock", function () {
         var disposeStats = ctx.slots.register({ name: "conversation.composer.dock", id: "stats", priority: -10 }, function () { return null; });
         return disposeStats;
+      });
+      ctx.slots.inject("settings.section", function () {
+        return ctx.slots.register({ name: "settings.section", id: "usage", order: 25, label: "\u4f7f\u7528\u60c5\u51b5" }, SettingsUsageSection);
       });
     }
 

@@ -2,12 +2,15 @@
 // Registers same-origin JSON routes the browser panel fetches:
 // - GET /api/dsh-plugin-balance/balance   — DeepSeek API balance (key resolved per request, never leaves the host)
 // - GET /api/dsh-plugin-balance/git?sessionId=… — git status of the session's workspace
+// - GET /api/dsh-plugin-balance/usage?days=… — cross-session token usage history (daily series + day×hour heatmap)
 
 export const name = 'dsh-plugin-balance'
-export const inject = ['webServer', 'credentials', 'sessions', 'shell']
+export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'sessionQuery']
 
 const BALANCE_PATH = '/api/dsh-plugin-balance/balance'
 const GIT_PATH = '/api/dsh-plugin-balance/git'
+const USAGE_PATH = '/api/dsh-plugin-balance/usage'
+const MAX_USAGE_DAYS = 90
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -92,6 +95,94 @@ async function fetchGit(ctx, sessionId) {
   return { ok: true, branch, ahead, behind, changed: lines.length - 1 }
 }
 
+function dayKey(ts) {
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+}
+
+// Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
+// from every session in the corpus into a continuous day series plus a
+// day×hour heatmap, bounded to the last `days` days.
+async function fetchUsage(ctx, days) {
+  const span = Math.min(Math.max(parseInt(days, 10) || 14, 1), MAX_USAGE_DAYS)
+  const now = Date.now()
+  const since = now - span * 86400000
+  const byDay = new Map()
+  const byHour = new Map()
+  const activeSessions = new Set()
+  const records = await ctx.sessionQuery.listSessions()
+  for (const rec of records) {
+    let events
+    try {
+      events = await ctx.sessionQuery.listEvents(rec.id)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(events)) continue
+    let touched = false
+    for (const ev of events) {
+      if (ev == null || ev.type !== 'assistant/chunk') continue
+      const chunk = ev.data != null ? ev.data.chunk : undefined
+      if (chunk == null || chunk.type !== 'usage' || chunk.usage == null) continue
+      const ts = typeof ev.time === 'number' ? ev.time : undefined
+      if (ts == null || ts < since) continue
+      const u = chunk.usage
+      const input = u.inputTokens || 0
+      const output = u.outputTokens || 0
+      const reasoning = u.reasoningTokens || 0
+      const cacheRead = u.cacheReadTokens || 0
+      const cacheWrite = u.cacheWriteTokens || 0
+      const total = input + output + reasoning + cacheRead + cacheWrite
+      if (!(total > 0)) continue
+      touched = true
+      const dk = dayKey(ts)
+      let d = byDay.get(dk)
+      if (d == null) {
+        d = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }
+        byDay.set(dk, d)
+      }
+      d.input += input
+      d.output += output
+      d.reasoning += reasoning
+      d.cacheRead += cacheRead
+      d.cacheWrite += cacheWrite
+      d.total += total
+      d.steps += 1
+      const hk = dk + '|' + new Date(ts).getHours()
+      byHour.set(hk, (byHour.get(hk) || 0) + total)
+    }
+    if (touched) activeSessions.add(rec.id)
+  }
+  // Continuous ascending day axis for the whole window.
+  const series = []
+  for (let i = span - 1; i >= 0; i--) {
+    const dk = dayKey(now - i * 86400000)
+    const d = byDay.get(dk)
+    series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }))
+  }
+  const heatmap = []
+  for (let i = 0; i < span; i++) {
+    const dk = dayKey(now - (span - 1 - i) * 86400000)
+    for (let h = 0; h < 24; h++) heatmap.push({ day: i, hour: h, date: dk, total: byHour.get(dk + '|' + h) || 0 })
+  }
+  let total = 0
+  let activeDays = 0
+  for (const d of series) {
+    total += d.total
+    if (d.total > 0) activeDays += 1
+  }
+  return {
+    ok: true,
+    span,
+    firstDate: series[0].date,
+    lastDate: series[series.length - 1].date,
+    summary: { total, avgPerDay: Math.round(total / span), activeDays, sessionCount: activeSessions.size },
+    series,
+    heatmap,
+  }
+}
+
 export function apply(ctx) {
   const disposeBalance = ctx.webServer.register({
     kind: 'exact',
@@ -117,8 +208,22 @@ export function apply(ctx) {
       }
     },
   })
+  const disposeUsage = ctx.webServer.register({
+    kind: 'exact',
+    path: USAGE_PATH,
+    async handler(req, res) {
+      try {
+        const url = new URL(req.url, 'http://dsh.internal')
+        const days = url.searchParams.get('days')
+        sendJson(res, 200, await fetchUsage(ctx, days))
+      } catch (error) {
+        sendJson(res, 200, { ok: false, error: error && error.message ? error.message : String(error) })
+      }
+    },
+  })
   return () => {
     disposeBalance()
     disposeGit()
+    disposeUsage()
   }
 }
