@@ -143,12 +143,8 @@ window.__ModuleLoader__.load({
           React.createElement("path", { d: "M4.4 7.2 l1.9 1.9 l3.3 -3.5", stroke: "#101215", strokeWidth: 1.6, fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }),
         );
       }
-      if (props.status === "in_progress") {
-        return React.createElement("svg", Object.assign({}, base, { className: "tp-spin" }),
-          React.createElement("circle", { cx: 7, cy: 7, r: 6.4, stroke: T.layer2, strokeWidth: 1.4, fill: "none" }),
-          React.createElement("path", { d: "M7 0.6 a6.4 6.4 0 0 1 6.4 6.4", stroke: T.brand, strokeWidth: 1.4, fill: "none", strokeLinecap: "round" }),
-        );
-      }
+      // pending and in_progress share the same dash — the todo list does not
+      // surface which item is being worked on (the goal row already says so).
       return React.createElement("svg", base,
         React.createElement("path", { d: "M3.2 7 h7.6", stroke: T.borderStrong, strokeWidth: 1.6, strokeLinecap: "round" }),
       );
@@ -439,8 +435,7 @@ window.__ModuleLoader__.load({
       var todos = props.snap.todos;
       var list = Array.isArray(todos) ? todos : [];
       var done = list.filter(function (t) { return t.status === "completed"; }).length;
-      var active = list.filter(function (t) { return t.status === "in_progress"; }).length;
-      var summary = (active > 0 ? "\u8fdb\u884c\u4e2d " + active + " \u00b7 " : "") + done + "/" + list.length;
+      var summary = done + "/" + list.length;
       return React.createElement("div", null,
         React.createElement("button", {
           type: "button",
