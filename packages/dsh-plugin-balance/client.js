@@ -566,12 +566,12 @@ window.__ModuleLoader__.load({
       });
       ctx.slots.inject("conversation.input.dock", function () {
         var disposeBridge = ctx.slots.register({ name: "conversation.input.dock", id: "task-panel-bridge", order: 0 }, Bridge);
-        var disposeTodo = ctx.slots.register({ name: "conversation.input.dock", id: "todo", order: 0 }, function () { return null; });
-        var disposeGoal = ctx.slots.register({ name: "conversation.input.dock", id: "goal", order: 10 }, function () { return null; });
+        var disposeTodo = ctx.slots.register({ name: "conversation.input.dock", id: "todo", priority: -10 }, function () { return null; });
+        var disposeGoal = ctx.slots.register({ name: "conversation.input.dock", id: "goal", priority: -10 }, function () { return null; });
         return function () { disposeTodo(); disposeGoal(); disposeBridge(); };
       });
       ctx.slots.inject("conversation.composer.dock", function () {
-        var disposeStats = ctx.slots.register({ name: "conversation.composer.dock", id: "stats", order: 0 }, function () { return null; });
+        var disposeStats = ctx.slots.register({ name: "conversation.composer.dock", id: "stats", priority: -10 }, function () { return null; });
         return disposeStats;
       });
     }
