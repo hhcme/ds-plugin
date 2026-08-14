@@ -113,9 +113,15 @@ async function fetchUsage(ctx, days) {
   const activeSessions = new Set()
   const records = await ctx.sessionQuery.listSessions()
   for (const rec of records) {
+    // listSessions returns { header, live, persisted } records — the id lives
+    // on the header. readSession() is the live-preferred full read: its
+    // snapshotSessionEvent clones keep `data`, unlike listEvents() which
+    // returns lightweight { sessionId, seq, type, time, surface } records
+    // with the payload stripped (aggregation would always be zero).
     let events
     try {
-      events = await ctx.sessionQuery.listEvents(rec.id)
+      const snap = await ctx.sessionQuery.readSession(rec != null && rec.header != null ? rec.header.id : undefined)
+      events = snap != null ? snap.events : undefined
     } catch {
       continue
     }
@@ -152,7 +158,7 @@ async function fetchUsage(ctx, days) {
       const hk = dk + '|' + new Date(ts).getHours()
       byHour.set(hk, (byHour.get(hk) || 0) + total)
     }
-    if (touched) activeSessions.add(rec.id)
+    if (touched) activeSessions.add(rec.header.id)
   }
   // Continuous ascending day axis for the whole window.
   const series = []
