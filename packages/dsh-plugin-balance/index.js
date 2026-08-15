@@ -102,11 +102,10 @@ function dayKey(ts) {
 }
 
 // Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
-// from every session in the corpus. The bar-chart series follows the
-// requested `days` window; the calendar heatmap always covers the last
-// MAX_USAGE_DAYS days, independent of that selector.
-async function fetchUsage(ctx, days) {
-  const span = Math.min(Math.max(parseInt(days, 10) || 14, 1), MAX_USAGE_DAYS)
+// from every session in the corpus into one continuous 90-day daily series.
+// The client derives both the 7/14/30-day bar chart and the calendar heatmap
+// from this single fixed window, so the selector never refetches.
+async function fetchUsage(ctx) {
   const now = Date.now()
   const since = now - MAX_USAGE_DAYS * 86400000
   const byDay = new Map()
@@ -155,34 +154,19 @@ async function fetchUsage(ctx, days) {
       d.steps += 1
     }
   }
-  // Continuous ascending day axis for the selected bar-chart window.
+  // Continuous ascending day axis for the fixed 90-day window.
   const series = []
-  for (let i = span - 1; i >= 0; i--) {
+  for (let i = MAX_USAGE_DAYS - 1; i >= 0; i--) {
     const dk = dayKey(now - i * 86400000)
     const d = byDay.get(dk)
     series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }))
   }
-  // Calendar heatmap: one cell per day, always the full 90-day window.
-  const heatDays = []
-  for (let i = MAX_USAGE_DAYS - 1; i >= 0; i--) {
-    const dk = dayKey(now - i * 86400000)
-    const d = byDay.get(dk)
-    heatDays.push({ date: dk, total: d != null ? d.total : 0 })
-  }
-  let total = 0
-  let activeDays = 0
-  for (const d of series) {
-    total += d.total
-    if (d.total > 0) activeDays += 1
-  }
   return {
     ok: true,
-    span,
+    span: MAX_USAGE_DAYS,
     firstDate: series[0].date,
     lastDate: series[series.length - 1].date,
-    summary: { total, avgPerDay: Math.round(total / span), activeDays },
     series,
-    heatDays,
   }
 }
 
@@ -216,9 +200,7 @@ export function apply(ctx) {
     path: USAGE_PATH,
     async handler(req, res) {
       try {
-        const url = new URL(req.url, 'http://dsh.internal')
-        const days = url.searchParams.get('days')
-        sendJson(res, 200, await fetchUsage(ctx, days))
+        sendJson(res, 200, await fetchUsage(ctx))
       } catch (error) {
         sendJson(res, 200, { ok: false, error: error && error.message ? error.message : String(error) })
       }

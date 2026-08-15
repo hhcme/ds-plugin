@@ -36,10 +36,10 @@ window.__ModuleLoader__.load({
     function fresh(at) {
       return at > 0 && (Date.now() - at) < 60000;
     }
-    // Same 60s-TTL idea for the usage-history payload; the span it was
-    // computed for is part of the cache key so switching 7/14/30 days
-    // refetches instead of showing a stale window.
-    var usageCache = { at: 0, span: 0, payload: null };
+    // One fixed 90-day usage payload with the usual 60s TTL. The 7/14/30
+    // selector only re-slices this cached series client-side, so switching
+    // ranges never refetches and never touches the calendar heatmap.
+    var usageCache = { at: 0, payload: null };
     function pad2(n) {
       return (n < 10 ? "0" : "") + n;
     }
@@ -52,15 +52,6 @@ window.__ModuleLoader__.load({
       for (var i = span - 1; i >= 0; i--) {
         var t = new Date(now - i * 86400000);
         out.push({ date: t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate()), input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 });
-      }
-      return out;
-    }
-    function zeroUsageDays(span) {
-      var out = [];
-      var now = Date.now();
-      for (var d = 0; d < span; d++) {
-        var t = new Date(now - (span - 1 - d) * 86400000);
-        out.push({ date: t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate()), total: 0 });
       }
       return out;
     }
@@ -663,7 +654,9 @@ window.__ModuleLoader__.load({
 
     // Calendar heatmap: one cell per day over the last 90 days (three
     // months), days flowing horizontally week by week, Monday on top.
-    // Independent of the range selector — always the fixed 90-day window.
+    // Row-major flex layout: every week column gets the same share of the
+    // card width, so the grid always fills the width with no horizontal
+    // scrollbar. Independent of the range selector — fixed 90-day window.
     function UsageCalendarHeatmap(props) {
       var days = props.days || [];
       var max = 0;
@@ -671,27 +664,30 @@ window.__ModuleLoader__.load({
       var lead = days.length > 0 ? (new Date(days[0].date + "T00:00:00").getDay() + 6) % 7 : 0;
       var weekCount = Math.ceil((lead + days.length) / 7);
       var weekdayNames = ["\u4e00", "\u4e8c", "\u4e09", "\u56db", "\u4e94", "\u516d", "\u65e5"];
-      var cellW = 13;
-      var cellH = 13;
-      var gap = 2;
-      var colW = cellW + gap * 2;
-      function makeCell(d) {
+      function cellOf(d) {
         var active = d.total > 0;
         var isHover = props.hover != null && props.hover.date === d.date;
         var a = max > 0 ? Math.log1p(d.total) / Math.log1p(max) : 0;
         var alpha = 0.07 + a * 0.93;
         return React.createElement("div", {
-          title: d.date + " \u00b7 " + (active ? fmt(d.total) + " tokens" : "\u65e0\u6d88\u8017"),
-          onMouseEnter: function () { props.onHover({ date: d.date, total: d.total }); },
-          onMouseLeave: function () { props.onHover(null); },
-          style: {
-            width: cellW, height: cellH, margin: gap, flexShrink: 0, borderRadius: "3px",
-            background: active ? "rgba(77, 141, 255, " + alpha.toFixed(3) + ")" : "rgba(255,255,255,0.05)",
-            boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
-          },
-        });
+          style: { flex: "1 1 0", minWidth: 0, padding: "2px", boxSizing: "border-box" },
+        },
+          React.createElement("div", {
+            title: d.date + " \u00b7 " + (active ? fmt(d.total) + " tokens" : "\u65e0\u6d88\u8017"),
+            onMouseEnter: function () { props.onHover({ date: d.date, total: d.total }); },
+            onMouseLeave: function () { props.onHover(null); },
+            style: {
+              width: "100%", aspectRatio: "1 / 1", borderRadius: "4px",
+              background: active ? "rgba(77, 141, 255, " + alpha.toFixed(3) + ")" : "rgba(255,255,255,0.05)",
+              boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
+            },
+          }),
+        );
       }
-      var colEls = [];
+      function emptyCell(key) {
+        return React.createElement("div", { key: key, style: { flex: "1 1 0", minWidth: 0, padding: "2px", boxSizing: "border-box" } });
+      }
+      var monthLabels = [];
       for (var w = 0; w < weekCount; w++) {
         var monthLabel = "";
         for (var r2 = 0; r2 < 7; r2++) {
@@ -703,31 +699,30 @@ window.__ModuleLoader__.load({
             break;
           }
         }
-        var cells = [];
-        for (var r = 0; r < 7; r++) {
-          var idx = w * 7 + r - lead;
+        monthLabels.push(React.createElement("div", { key: w, style: { flex: "1 1 0", minWidth: 0, fontSize: "9px", color: T.tertiary, whiteSpace: "nowrap" } }, monthLabel));
+      }
+      var rows = [];
+      for (var r = 0; r < 7; r++) {
+        var rowCells = [];
+        for (var w2 = 0; w2 < weekCount; w2++) {
+          var idx = w2 * 7 + r - lead;
           if (idx < 0 || idx >= days.length) {
-            cells.push(React.createElement("div", { key: "e" + r, style: { width: cellW, height: cellH, margin: gap, flexShrink: 0 } }));
+            rowCells.push(emptyCell("e" + w2));
             continue;
           }
-          cells.push(React.createElement("div", { key: idx }, makeCell(days[idx])));
+          rowCells.push(React.createElement("div", { key: idx, style: { flex: "1 1 0", minWidth: 0, padding: "2px", boxSizing: "border-box" } }, cellOf(days[idx])));
         }
-        colEls.push(React.createElement("div", { key: w, style: { display: "flex", flexDirection: "column", width: colW, flexShrink: 0 } },
-          React.createElement("div", { style: { height: "16px", fontSize: "9px", color: T.tertiary, whiteSpace: "nowrap", display: "flex", alignItems: "flex-end" } }, monthLabel),
-          React.createElement("div", { style: { display: "flex", flexWrap: "wrap", width: colW } }, cells),
+        rows.push(React.createElement("div", { key: r, style: { display: "flex", alignItems: "center" } },
+          React.createElement("div", { style: { width: "24px", flexShrink: 0, fontSize: "9px", color: T.tertiary, display: "flex", justifyContent: "flex-end", paddingRight: "6px" } }, weekdayNames[r]),
+          React.createElement("div", { style: { flex: "1 1 0", minWidth: 0, display: "flex" } }, rowCells),
         ));
       }
-      var wdLabels = weekdayNames.map(function (n, r) {
-        return React.createElement("div", { key: r, style: { height: cellH + gap * 2, fontSize: "9px", color: T.tertiary, display: "flex", alignItems: "center", justifyContent: "flex-end", width: "22px" } }, n);
-      });
-      return React.createElement("div", { style: { overflowX: "auto" } },
-        React.createElement("div", { style: { display: "inline-flex" } },
-          React.createElement("div", { style: { display: "flex", flexDirection: "column", width: "22px", flexShrink: 0 } },
-            React.createElement("div", { style: { height: "16px" } }),
-            wdLabels,
-          ),
-          colEls,
+      return React.createElement("div", null,
+        React.createElement("div", { style: { display: "flex", marginBottom: "2px" } },
+          React.createElement("div", { style: { width: "24px", flexShrink: 0 } }),
+          React.createElement("div", { style: { flex: "1 1 0", minWidth: 0, display: "flex", height: "16px" } }, monthLabels),
         ),
+        rows,
       );
     }
 
@@ -761,16 +756,15 @@ window.__ModuleLoader__.load({
         var alive = true;
         function tick() {
           var c = usageCache;
-          if (c.span === span && fresh(c.at) && c.payload != null) {
+          if (fresh(c.at) && c.payload != null) {
             if (alive) setSt({ status: "ready", data: c.payload, error: null });
             return;
           }
-          fetch(USAGE_PATH + "?days=" + span)
+          fetch(USAGE_PATH)
             .then(function (r) { return r.json(); })
             .then(function (res) {
               if (res != null && res.ok) {
                 usageCache.at = Date.now();
-                usageCache.span = span;
                 usageCache.payload = res;
                 if (alive) setSt({ status: "ready", data: res, error: null });
               } else {
@@ -785,7 +779,7 @@ window.__ModuleLoader__.load({
         tick();
         var stop = runtime.interval(tick, 60000);
         return function () { alive = false; stop(); };
-      }, [span, nonce]);
+      }, [nonce]);
 
       var head = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" } },
         React.createElement("span", { style: { fontSize: "15px", fontWeight: "700", color: T.label, flex: "1" } }, "\u4f7f\u7528\u60c5\u51b5"),
@@ -802,11 +796,6 @@ window.__ModuleLoader__.load({
             },
           }, n + " \u5929");
         }),
-        React.createElement("button", {
-          type: "button", title: "\u5237\u65b0",
-          onClick: function () { usageCache.at = 0; setNonce(nonce + 1); },
-          style: { border: "none", background: "transparent", color: T.tertiary, cursor: "pointer", padding: "4px", borderRadius: "6px", display: "grid", placeItems: "center" },
-        }, React.createElement(RefreshIcon, { size: 14 })),
       );
 
       // Always render the full layout — summary cards, bar chart, heatmap.
@@ -814,9 +803,15 @@ window.__ModuleLoader__.load({
       // the charts show zero-filled placeholders, never a bare loading glyph.
       var ready = st.status === "ready" && st.data != null && st.data.ok;
       var data = ready ? st.data : null;
-      var series = ready ? (data.series || []) : zeroUsageSeries(span);
-      var grid = ready ? (data.heatDays || []) : zeroUsageDays(90);
-      var summary = ready ? data.summary : { total: 0, avgPerDay: 0, activeDays: 0 };
+      var full = ready ? (data.series || []) : zeroUsageSeries(90);
+      var series = full.length > span ? full.slice(full.length - span) : full;
+      var grid = full.map(function (d) { return { date: d.date, total: d.total }; });
+      var summary = { total: 0, avgPerDay: 0, activeDays: 0 };
+      for (var s = 0; s < series.length; s++) {
+        summary.total += series[s].total;
+        if (series[s].total > 0) summary.activeDays += 1;
+      }
+      summary.avgPerDay = Math.round(summary.total / span);
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
       var barSub = barHover != null && series[barHover] != null
