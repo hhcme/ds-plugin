@@ -1147,16 +1147,54 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Instant response: patch the moment the settings panel's DOM lands (the
+    // observer fires in a microtask before the browser paints, so the gear
+    // never flashes), instead of waiting for the next poll tick. Only reacts
+    // to added subtrees that contain a <nav> (the settings panel), keeping
+    // the mutation callback cheap; the 1s interval stays as a safety net.
+    var navPatchObserver = null;
+    function startSettingsDomPatcher() {
+      if (typeof document === "undefined") return function () {};
+      if (typeof MutationObserver !== "undefined") {
+        navPatchObserver = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            var added = mutations[i].addedNodes;
+            if (added == null) continue;
+            for (var k = 0; k < added.length; k++) {
+              var n = added[k];
+              if (n != null && n.nodeType === 1 && n.querySelector != null &&
+                (n.tagName === "NAV" || n.querySelector("nav") != null)) {
+                patchSettingsNavIcons();
+                patchSettingsPanelGutter();
+                return;
+              }
+            }
+          }
+        });
+        navPatchObserver.observe(document.body, { childList: true, subtree: true });
+      }
+      return function () {
+        if (navPatchObserver != null) {
+          navPatchObserver.disconnect();
+          navPatchObserver = null;
+        }
+      };
+    }
+
     function apply(ctx) {
       runtime = ctx;
       ctx.effect(function () {
         patchSettingsNavIcons();
         patchSettingsPanelGutter();
+        var stopObserver = startSettingsDomPatcher();
         var stop = runtime.interval(function () {
           patchSettingsNavIcons();
           patchSettingsPanelGutter();
         }, 1000);
-        return stop;
+        return function () {
+          stop();
+          stopObserver();
+        };
       });
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
       if (typeof document !== "undefined" && document.querySelector("style[data-plugin=dsh-plugin-balance]") == null) {
