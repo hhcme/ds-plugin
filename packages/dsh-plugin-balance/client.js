@@ -796,6 +796,10 @@ window.__ModuleLoader__.load({
             },
           }, n + " \u5929");
         }),
+        st.status === "loading" ? React.createElement("span", { style: { display: "flex", alignItems: "center", gap: "6px", color: T.tertiary, fontSize: "11px" } },
+          React.createElement("span", { style: { width: "11px", height: "11px", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.15)", borderTopColor: T.brand, display: "inline-block", animation: "tp-spin 0.8s linear infinite" } }),
+          "\u7edf\u8ba1\u4e2d\u2026",
+        ) : null,
       );
 
       // Always render the full layout — summary cards, bar chart, heatmap.
@@ -829,7 +833,7 @@ window.__ModuleLoader__.load({
             style: { marginTop: "10px", background: T.hoverBg, color: T.label, border: "none", borderRadius: "8px", padding: "4px 12px", cursor: "pointer", fontSize: "11px", font: "inherit" },
           }, "\u70b9\u51fb\u91cd\u8bd5"),
         )
-        : React.createElement("div", null,
+        : React.createElement("div", { className: st.status === "loading" ? "tp-pulse" : undefined },
           React.createElement(UsageSummaryCards, { summary: summary, span: span }),
           React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
             React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
@@ -851,7 +855,7 @@ window.__ModuleLoader__.load({
       if (typeof document !== "undefined" && document.querySelector("style[data-plugin=dsh-plugin-balance]") == null) {
         var tag = document.createElement("style");
         tag.setAttribute("data-plugin", "dsh-plugin-balance");
-        tag.textContent = ".tp-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 0.35s ease}.tp-collapse.tp-open{grid-template-rows:1fr}.tp-collapse>.tp-inner{overflow:hidden;min-height:0}.tp-grow{transform-origin:286px 18px;animation:tp-grow 0.35s cubic-bezier(0.16,1,0.3,1)}@keyframes tp-grow{from{transform:scale(0.85)}to{transform:scale(1)}}.tp-shrink{pointer-events:none;animation:tp-shrink 0.35s cubic-bezier(0.4,0,1,1) forwards}@keyframes tp-shrink{from{transform:scale(1)}to{transform:scale(0.02)}}.tp-spin{animation:tp-spin 1s linear infinite;transform-origin:50% 50%}@keyframes tp-spin{to{transform:rotate(360deg)}}.tp-icobtn{background:transparent;border-radius:12px;transition:background 0.15s ease}.tp-icobtn:hover{background:rgba(255,255,255,0.06)}";
+        tag.textContent = ".tp-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 0.35s ease}.tp-collapse.tp-open{grid-template-rows:1fr}.tp-collapse>.tp-inner{overflow:hidden;min-height:0}.tp-grow{transform-origin:286px 18px;animation:tp-grow 0.35s cubic-bezier(0.16,1,0.3,1)}@keyframes tp-grow{from{transform:scale(0.85)}to{transform:scale(1)}}.tp-shrink{pointer-events:none;animation:tp-shrink 0.35s cubic-bezier(0.4,0,1,1) forwards}@keyframes tp-shrink{from{transform:scale(1)}to{transform:scale(0.02)}}.tp-spin{animation:tp-spin 1s linear infinite;transform-origin:50% 50%}@keyframes tp-spin{to{transform:rotate(360deg)}}.tp-icobtn{background:transparent;border-radius:12px;transition:background 0.15s ease}.tp-icobtn:hover{background:rgba(255,255,255,0.06)}.tp-pulse{animation:tp-pulse 1.6s ease-in-out infinite}@keyframes tp-pulse{0%,100%{opacity:1}50%{opacity:0.4}}";
         document.head.appendChild(tag);
       }
       ctx.slots.inject("shell.overlay", function () {
