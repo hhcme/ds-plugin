@@ -609,26 +609,35 @@ window.__ModuleLoader__.load({
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
       var labelEvery = Math.max(1, Math.ceil(series.length / 7));
-      // Every billed component gets its own stacked segment: uncached input,
-      // cache read, cache write, reasoning, output — together the whole bar
-      // is the complete daily consumption.
-      var SEGS = [
-        { key: "input", label: "\u8f93\u5165", color: "#4d8dff" },
-        { key: "cacheRead", label: "\u7f13\u5b58\u8bfb", color: "#2dd4bf" },
-        { key: "cacheWrite", label: "\u7f13\u5b58\u5199", color: "#f472b6" },
-        { key: "reasoning", label: "\u63a8\u7406", color: "#a78bfa" },
-        { key: "output", label: "\u8f93\u51fa", color: "#35c47d" },
-      ];
-      var hasCacheWrite = false;
-      for (var hcw = 0; hcw < series.length; hcw++) if ((series[hcw].cacheWrite || 0) > 0) { hasCacheWrite = true; break; }
+      // The bar shows the day's TOTAL stacked by model — every model that
+      // consumed tokens gets its own color segment.
+      var PALETTE = ["#4d8dff", "#35c47d", "#e3a63c", "#a78bfa", "#f472b6", "#2dd4bf", "#f97316", "#94a3b8", "#22d3ee", "#fb7185"];
+      var modelTotals = {};
+      for (var mi = 0; mi < series.length; mi++) {
+        var mms = series[mi].models;
+        if (mms == null) continue;
+        for (var mn in mms) {
+          if (Object.prototype.hasOwnProperty.call(mms, mn)) modelTotals[mn] = (modelTotals[mn] || 0) + mms[mn];
+        }
+      }
+      var modelNames = Object.keys(modelTotals).sort(function (a, b) { return modelTotals[b] - modelTotals[a]; });
+      var colorOf = {};
+      for (var mc = 0; mc < modelNames.length; mc++) colorOf[modelNames[mc]] = PALETTE[mc % PALETTE.length];
       function segmentsOf(d) {
         var segs = [];
-        for (var s = 0; s < SEGS.length; s++) {
-          if (SEGS[s].key === "cacheWrite" && !hasCacheWrite) continue;
-          var v = d[SEGS[s].key] || 0;
-          if (v > 0) segs.push({ v: v, color: SEGS[s].color, label: SEGS[s].label });
+        for (var s = 0; s < modelNames.length; s++) {
+          var name = modelNames[s];
+          var v = d.models != null ? (d.models[name] || 0) : 0;
+          if (v > 0) segs.push({ v: v, color: colorOf[name], name: name });
         }
         return segs;
+      }
+      function titleOf(d) {
+        var parts = [d.date];
+        var segs = segmentsOf(d);
+        for (var t = 0; t < segs.length; t++) parts.push(segs[t].name + " " + fmt(segs[t].v));
+        parts.push("\u5171 " + fmt(d.total));
+        return parts.join(" \u00b7 ");
       }
       var bars = series.map(function (d, i) {
         var hPct = max > 0 ? Math.round((d.total / max) * 100) : 0;
@@ -641,7 +650,7 @@ window.__ModuleLoader__.load({
           onMouseLeave: function () { props.onHover(null); },
         },
           React.createElement("div", {
-            title: d.date + " \u5171 " + fmt(d.total) + " \u00b7 \u8f93\u5165 " + fmt(d.input) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(d.cacheRead) + " \u00b7 \u7f13\u5b58\u5199 " + fmt(d.cacheWrite) + " \u00b7 \u63a8\u7406 " + fmt(d.reasoning) + " \u00b7 \u8f93\u51fa " + fmt(d.output) + " \u00b7 \u6b65 " + d.steps,
+            title: titleOf(d),
             style: {
               height: hPct > 0 ? Math.max(2, hPct) + "%" : "2px",
               margin: "0 3px",
@@ -662,14 +671,12 @@ window.__ModuleLoader__.load({
           i % labelEvery === 0 ? d.date.slice(5) : "",
         );
       });
-      var legendItems = [];
-      for (var lg = 0; lg < SEGS.length; lg++) {
-        if (SEGS[lg].key === "cacheWrite" && !hasCacheWrite) continue;
-        legendItems.push(React.createElement("span", { key: SEGS[lg].key, style: { display: "flex", alignItems: "center", gap: "5px" } },
-          React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: SEGS[lg].color } }),
-          SEGS[lg].label,
-        ));
-      }
+      var legendItems = modelNames.map(function (name) {
+        return React.createElement("span", { key: name, style: { display: "flex", alignItems: "center", gap: "5px" } },
+          React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: colorOf[name] } }),
+          name,
+        );
+      });
       return React.createElement("div", null,
         React.createElement("div", { style: { height: "168px", display: "flex", alignItems: "flex-end" } }, bars),
         React.createElement("div", { style: { display: "flex", marginTop: "6px" } }, labels),
@@ -845,9 +852,16 @@ window.__ModuleLoader__.load({
       summary.avgPerDay = Math.round(summary.total / span);
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
-      var barSub = barHover != null && series[barHover] != null
-        ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u7f13\u5b58\u5199 " + fmt(series[barHover].cacheWrite) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u5171 " + fmt(series[barHover].total)
-        : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
+      var barSub = "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
+      if (barHover != null && series[barHover] != null) {
+        var hd = series[barHover];
+        var hparts = [hd.date];
+        var hms = hd.models || {};
+        var hnames = Object.keys(hms).sort(function (a, b) { return hms[b] - hms[a]; });
+        for (var hn = 0; hn < hnames.length; hn++) hparts.push(hnames[hn] + " " + fmt(hms[hnames[hn]]));
+        hparts.push("\u5171 " + fmt(hd.total));
+        barSub = hparts.join(" \u00b7 ");
+      }
       var heatSub = heatHover != null
         ? heatHover.date + " \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
         : "\u6700\u8fd1 6 \u4e2a\u6708 \u00b7 \u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";

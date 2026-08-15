@@ -125,8 +125,19 @@ async function fetchUsage(ctx) {
       continue
     }
     if (!Array.isArray(events)) continue
+    // The model is not on the usage chunk itself: request/header events carry
+    // data.header.config.model and precede their step's chunks, so track the
+    // running model while walking the ascending log and attribute each usage
+    // total to it.
+    let currentModel = 'unknown'
     for (const ev of events) {
-      if (ev == null || ev.type !== 'assistant/chunk') continue
+      if (ev == null) continue
+      if (ev.type === 'request/header') {
+        const cfg = ev.data != null && ev.data.header != null ? ev.data.header.config : undefined
+        currentModel = cfg != null && typeof cfg.model === 'string' && cfg.model.length > 0 ? cfg.model : 'unknown'
+        continue
+      }
+      if (ev.type !== 'assistant/chunk') continue
       const chunk = ev.data != null ? ev.data.chunk : undefined
       if (chunk == null || chunk.type !== 'usage' || chunk.usage == null) continue
       const ts = typeof ev.time === 'number' ? ev.time : undefined
@@ -142,7 +153,7 @@ async function fetchUsage(ctx) {
       const dk = dayKey(ts)
       let d = byDay.get(dk)
       if (d == null) {
-        d = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }
+        d = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, models: {} }
         byDay.set(dk, d)
       }
       d.input += input
@@ -152,6 +163,7 @@ async function fetchUsage(ctx) {
       d.cacheWrite += cacheWrite
       d.total += total
       d.steps += 1
+      d.models[currentModel] = (d.models[currentModel] || 0) + total
     }
   }
   // Continuous ascending day axis for the fixed 180-day window.
@@ -159,7 +171,7 @@ async function fetchUsage(ctx) {
   for (let i = MAX_USAGE_DAYS - 1; i >= 0; i--) {
     const dk = dayKey(now - i * 86400000)
     const d = byDay.get(dk)
-    series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }))
+    series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, models: {} }))
   }
   return {
     ok: true,
