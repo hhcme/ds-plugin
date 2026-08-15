@@ -154,9 +154,15 @@ function dayKey(ts) {
 // Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
 // from every session in the corpus into one continuous 180-day daily series.
 // The client derives both the 7/14/30-day bar chart and the calendar heatmap
-// from this single fixed window, so the selector never refetches.
+// from this single fixed window, so the selector never refetches. The result
+// is day-granular history: a 5-minute server cache absorbs the client's
+// 60s refresh, so the expensive full-log scan runs at most ~12×/hour instead
+// of 60×/hour while the page is open.
+let usageResultCache = { at: 0, payload: null }
+
 async function fetchUsage(ctx) {
   const now = Date.now()
+  if (usageResultCache.payload != null && (now - usageResultCache.at) < 5 * 60000) return usageResultCache.payload
   const since = now - MAX_USAGE_DAYS * 86400000
   const byDay = new Map()
   const records = await ctx.sessionQuery.listSessions()
@@ -223,13 +229,15 @@ async function fetchUsage(ctx) {
     const d = byDay.get(dk)
     series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, models: {} }))
   }
-  return {
+  const result = {
     ok: true,
     span: MAX_USAGE_DAYS,
     firstDate: series[0].date,
     lastDate: series[series.length - 1].date,
     series,
   }
+  usageResultCache = { at: now, payload: result }
+  return result
 }
 
 // ---- version check & self-update ------------------------------------------

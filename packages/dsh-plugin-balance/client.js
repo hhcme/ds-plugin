@@ -1187,10 +1187,12 @@ window.__ModuleLoader__.load({
         patchSettingsNavIcons();
         patchSettingsPanelGutter();
         var stopObserver = startSettingsDomPatcher();
+        // Safety-net poll only: the MutationObserver handles the hot path, so
+        // a slow 2s cadence is plenty (the scan itself is a few ms).
         var stop = runtime.interval(function () {
           patchSettingsNavIcons();
           patchSettingsPanelGutter();
-        }, 1000);
+        }, 2000);
         return function () {
           stop();
           stopObserver();
