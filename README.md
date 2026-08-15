@@ -47,4 +47,16 @@ ds-plugin/
 
 ## 现有插件
 
-- **dsh-plugin-balance** — 输入区下方 stats 行旁显示 DeepSeek API 余额（CNY/USD/EUR），并显示当前会话 token 用量（in/out），点击刷新，每 60s 自动刷新。Host 半部注册 `GET /api/dsh-plugin-balance/balance`。
+- **dsh-plugin-balance** — 两个功能：
+  1. **任务面板**：右上角悬浮面板，显示 DeepSeek 余额、当前会话 token 用量、Git 状态、待办与目标，模块可折叠。
+  2. **设置 → 使用情况**：跨会话 token 消耗统计——汇总卡、按模型堆叠的每日柱状图（7/14/30 天可选）、近 6 个月日历热力图（每格一天）。
+  Host 半部注册路由：`/api/dsh-plugin-balance/balance`、`/api/dsh-plugin-balance/git`、`/api/dsh-plugin-balance/usage`。
+
+## 在其他电脑上使用
+
+1. 那台机器装好同版本 DSH 部署并保证 `dsh` 在 PATH 中（或用 `DSH_BIN=/path/to/dsh` 指定）。
+2. `git clone https://github.com/hhcme/ds-plugin.git && cd ds-plugin`
+3. `./scripts/install-plugin.sh dsh-plugin-balance`（等价于 `dsh plugin --profile web add ./packages/dsh-plugin-balance`）
+4. **重启 `dsh web`**，任务面板与"使用情况"即生效。
+
+注意：使用数据是**本机本地**的（读取该机器自己的会话日志，不跨机器同步）；余额模块需要该机器 DSH 里配置 `DEEPSEEK_API_KEY`；Git 模块显示的是该机器上当前对话项目的仓库状态。
