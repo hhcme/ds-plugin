@@ -10,7 +10,7 @@ export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'session
 const BALANCE_PATH = '/api/dsh-plugin-balance/balance'
 const GIT_PATH = '/api/dsh-plugin-balance/git'
 const USAGE_PATH = '/api/dsh-plugin-balance/usage'
-const MAX_USAGE_DAYS = 90
+const MAX_USAGE_DAYS = 180
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -102,7 +102,7 @@ function dayKey(ts) {
 }
 
 // Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
-// from every session in the corpus into one continuous 90-day daily series.
+// from every session in the corpus into one continuous 180-day daily series.
 // The client derives both the 7/14/30-day bar chart and the calendar heatmap
 // from this single fixed window, so the selector never refetches.
 async function fetchUsage(ctx) {
@@ -154,7 +154,7 @@ async function fetchUsage(ctx) {
       d.steps += 1
     }
   }
-  // Continuous ascending day axis for the fixed 90-day window.
+  // Continuous ascending day axis for the fixed 180-day window.
   const series = []
   for (let i = MAX_USAGE_DAYS - 1; i >= 0; i--) {
     const dk = dayKey(now - i * 86400000)

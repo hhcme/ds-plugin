@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
     function fresh(at) {
       return at > 0 && (Date.now() - at) < 60000;
     }
-    // One fixed 90-day usage payload with the usual 60s TTL. The 7/14/30
+    // One fixed 180-day (six-month) usage payload with the usual 60s TTL. The 7/14/30
     // selector only re-slices this cached series client-side, so switching
     // ranges never refetches and never touches the calendar heatmap.
     var usageCache = { at: 0, payload: null };
@@ -652,11 +652,11 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // Calendar heatmap: one cell per day over the last 90 days (three
+    // Calendar heatmap: one cell per day over the last 180 days (six
     // months), days flowing horizontally week by week, Monday on top.
     // Row-major flex layout: every week column gets the same share of the
     // card width, so the grid always fills the width with no horizontal
-    // scrollbar. Independent of the range selector — fixed 90-day window.
+    // scrollbar. Independent of the range selector — fixed 180-day window.
     function UsageCalendarHeatmap(props) {
       var days = props.days || [];
       var max = 0;
@@ -803,7 +803,7 @@ window.__ModuleLoader__.load({
       // the charts show zero-filled placeholders, never a bare loading glyph.
       var ready = st.status === "ready" && st.data != null && st.data.ok;
       var data = ready ? st.data : null;
-      var full = ready ? (data.series || []) : zeroUsageSeries(90);
+      var full = ready ? (data.series || []) : zeroUsageSeries(180);
       var series = full.length > span ? full.slice(full.length - span) : full;
       var grid = full.map(function (d) { return { date: d.date, total: d.total }; });
       var summary = { total: 0, avgPerDay: 0, activeDays: 0 };
@@ -819,7 +819,7 @@ window.__ModuleLoader__.load({
         : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
       var heatSub = heatHover != null
         ? heatHover.date + " \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
-        : "\u6700\u8fd1 90 \u5929 \u00b7 \u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
+        : "\u6700\u8fd1 6 \u4e2a\u6708 \u00b7 \u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
       var body = st.status === "error"
         ? React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.error }) },
           React.createElement("div", null, "\u52a0\u8f7d\u5931\u8d25\uff1a" + st.error),
@@ -834,7 +834,7 @@ window.__ModuleLoader__.load({
           React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
             React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
           ),
-          React.createElement(UsageChartCard, { title: "\u70ed\u529b\u56fe\uff08\u8fd1 90 \u5929\uff09", subtitle: heatSub },
+          React.createElement(UsageChartCard, { title: "\u70ed\u529b\u56fe\uff08\u8fd1 6 \u4e2a\u6708\uff09", subtitle: heatSub },
             React.createElement(UsageCalendarHeatmap, { days: grid, hover: heatHover, onHover: setHeatHover }),
           ),
         );
