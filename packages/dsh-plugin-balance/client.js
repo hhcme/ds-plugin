@@ -609,10 +609,31 @@ window.__ModuleLoader__.load({
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
       var labelEvery = Math.max(1, Math.ceil(series.length / 7));
+      // Every billed component gets its own stacked segment: uncached input,
+      // cache read, cache write, reasoning, output — together the whole bar
+      // is the complete daily consumption.
+      var SEGS = [
+        { key: "input", label: "\u8f93\u5165", color: "#4d8dff" },
+        { key: "cacheRead", label: "\u7f13\u5b58\u8bfb", color: "#2dd4bf" },
+        { key: "cacheWrite", label: "\u7f13\u5b58\u5199", color: "#f472b6" },
+        { key: "reasoning", label: "\u63a8\u7406", color: "#a78bfa" },
+        { key: "output", label: "\u8f93\u51fa", color: "#35c47d" },
+      ];
+      var hasCacheWrite = false;
+      for (var hcw = 0; hcw < series.length; hcw++) if ((series[hcw].cacheWrite || 0) > 0) { hasCacheWrite = true; break; }
+      function segmentsOf(d) {
+        var segs = [];
+        for (var s = 0; s < SEGS.length; s++) {
+          if (SEGS[s].key === "cacheWrite" && !hasCacheWrite) continue;
+          var v = d[SEGS[s].key] || 0;
+          if (v > 0) segs.push({ v: v, color: SEGS[s].color, label: SEGS[s].label });
+        }
+        return segs;
+      }
       var bars = series.map(function (d, i) {
         var hPct = max > 0 ? Math.round((d.total / max) * 100) : 0;
-        var outPct = d.total > 0 ? Math.round((d.output / d.total) * 100) : 0;
         var isHover = props.hover === i;
+        var segs = segmentsOf(d);
         return React.createElement("div", {
           key: d.date,
           style: { flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" },
@@ -620,20 +641,19 @@ window.__ModuleLoader__.load({
           onMouseLeave: function () { props.onHover(null); },
         },
           React.createElement("div", {
-            title: d.date + " \u5171 " + fmt(d.total) + " \u00b7 \u8f93\u5165 " + fmt(d.input) + " \u00b7 \u8f93\u51fa " + fmt(d.output) + " \u00b7 \u63a8\u7406 " + fmt(d.reasoning) + " \u00b7 \u6b65 " + d.steps,
+            title: d.date + " \u5171 " + fmt(d.total) + " \u00b7 \u8f93\u5165 " + fmt(d.input) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(d.cacheRead) + " \u00b7 \u7f13\u5b58\u5199 " + fmt(d.cacheWrite) + " \u00b7 \u63a8\u7406 " + fmt(d.reasoning) + " \u00b7 \u8f93\u51fa " + fmt(d.output) + " \u00b7 \u6b65 " + d.steps,
             style: {
               height: hPct > 0 ? Math.max(2, hPct) + "%" : "2px",
               margin: "0 3px",
-              display: "flex", flexDirection: "column", justifyContent: "flex-end",
+              display: "flex", flexDirection: "column",
               borderRadius: "4px 4px 0 0", overflow: "hidden", cursor: "default",
               background: d.total > 0 ? (isHover ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)") : "rgba(255,255,255,0.05)",
               boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
             },
           },
-            d.total > 0 ? React.createElement(React.Fragment, null,
-              React.createElement("div", { style: { height: (100 - outPct) + "%", background: T.brand, opacity: 0.9 } }),
-              React.createElement("div", { style: { height: outPct + "%", background: T.success } }),
-            ) : null,
+            segs.map(function (s, k) {
+              return React.createElement("div", { key: k, style: { flexGrow: s.v, flexBasis: 0, background: s.color } });
+            }),
           ),
         );
       });
@@ -642,12 +662,19 @@ window.__ModuleLoader__.load({
           i % labelEvery === 0 ? d.date.slice(5) : "",
         );
       });
+      var legendItems = [];
+      for (var lg = 0; lg < SEGS.length; lg++) {
+        if (SEGS[lg].key === "cacheWrite" && !hasCacheWrite) continue;
+        legendItems.push(React.createElement("span", { key: SEGS[lg].key, style: { display: "flex", alignItems: "center", gap: "5px" } },
+          React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: SEGS[lg].color } }),
+          SEGS[lg].label,
+        ));
+      }
       return React.createElement("div", null,
         React.createElement("div", { style: { height: "168px", display: "flex", alignItems: "flex-end" } }, bars),
         React.createElement("div", { style: { display: "flex", marginTop: "6px" } }, labels),
         React.createElement("div", { style: { display: "flex", gap: "14px", marginTop: "8px", fontSize: "10.5px", color: T.tertiary, flexWrap: "wrap" } },
-          React.createElement("span", { style: { display: "flex", alignItems: "center", gap: "5px" } }, React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: T.brand, opacity: 0.9 } }), "\u8f93\u5165"),
-          React.createElement("span", { style: { display: "flex", alignItems: "center", gap: "5px" } }, React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "2px", background: T.success } }), "\u8f93\u51fa"),
+          legendItems,
         ),
       );
     }
@@ -819,7 +846,7 @@ window.__ModuleLoader__.load({
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
       var barSub = barHover != null && series[barHover] != null
-        ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u5171 " + fmt(series[barHover].total)
+        ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u7f13\u5b58\u5199 " + fmt(series[barHover].cacheWrite) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u5171 " + fmt(series[barHover].total)
         : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
       var heatSub = heatHover != null
         ? heatHover.date + " \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
