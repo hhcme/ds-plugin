@@ -985,6 +985,7 @@ window.__ModuleLoader__.load({
     // panel close/open cycles.
     var NAV_ICONS = {
       "\u4f7f\u7528\u60c5\u51b5": '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><path d="M3.5 13.5 v-6"/><path d="M8 13.5 V3.5"/><path d="M12.5 13.5 v-4"/></svg>',
+      "\u901a\u77e5": '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M8 2.5 a3.5 3.5 0 0 1 3.5 3.5 c0 2.8 1.2 3.6 1.2 3.6 H3.3 s1.2 -0.8 1.2 -3.6 A3.5 3.5 0 0 1 8 2.5 Z"/><path d="M6.7 12.5 a1.4 1.4 0 0 0 2.6 0"/></svg>',
       "\u5173\u4e8e": '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><circle cx="8" cy="8" r="6"/><path d="M8 7.2 v4.3"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor" stroke="none"/></svg>',
     };
     function patchSettingsNavIcons() {
@@ -1267,7 +1268,17 @@ window.__ModuleLoader__.load({
         if (p != null && typeof p.then === "function") {
           p.then(function (r) { cb(r); }).catch(function () { cb(Notification.permission); });
         } else {
-          setTimeout(function () { cb(Notification.permission); }, 400);
+          // Legacy callback-style requestPermission: poll until the state
+          // leaves "default" (user answered) or ~5s pass.
+          var tries = 0;
+          var poll = runtime.interval(function () {
+            tries += 1;
+            var state = Notification.permission;
+            if (state !== "default" || tries > 16) {
+              poll();
+              cb(state);
+            }
+          }, 300);
         }
       } catch {
         cb("denied");
@@ -1298,6 +1309,96 @@ window.__ModuleLoader__.load({
       { id: "always", label: "\u59cb\u7ec8", desc: "\u5bf9\u8bdd\u5b8c\u6210\u65f6\u603b\u662f\u901a\u77e5" },
     ];
 
+    // Shipped settings-row look: border-bottom row, title + tertiary desc on
+    // the left, pill selector on the right (app design tokens, both themes).
+    var notifyRowStyle = { borderBottom: "1px solid var(--dsw-alias-border-l2)", alignItems: "center", gap: "8px", padding: "16px 0", display: "flex" };
+    var notifyTextStyle = { flexDirection: "column", flex: "1", gap: "4px", minWidth: "0", paddingRight: "48px", display: "flex" };
+    var notifyTitleStyle = { color: "var(--dsw-alias-label-primary)", fontSize: "14px", fontWeight: "400", lineHeight: "22px" };
+    var notifyDescStyle = { color: "var(--dsw-alias-label-tertiary)", fontSize: "12px", fontWeight: "400", lineHeight: "18px" };
+    var notifySelectorStyle = {
+      background: "var(--dsw-alias-bg-module-platform)",
+      height: "36px", font: "inherit", color: "var(--dsw-alias-label-primary)", cursor: "pointer",
+      border: "none", borderRadius: "18px", alignItems: "center", gap: "12px", padding: "0 14px",
+      fontSize: "14px", lineHeight: "22px", display: "inline-flex", flexShrink: 0,
+    };
+
+    // Pill + chevron selector with a custom dropdown, mirroring the shipped
+    // settings rows (Menu portal style). The menu renders in-tree with
+    // position:fixed — the settings panel has no transformed ancestor, so it
+    // escapes the scroll container without react-dom.
+    function NotifyModeSelect(props) {
+      var openRef = React.useState(false);
+      var open = openRef[0];
+      var setOpen = openRef[1];
+      var posRef = React.useState(null);
+      var pos = posRef[0];
+      var setPos = posRef[1];
+      var anchorRef = React.useRef(null);
+      React.useEffect(function () {
+        if (!open) return undefined;
+        function onDown(e) {
+          if (anchorRef.current != null && anchorRef.current.contains(e.target)) return;
+          setOpen(false);
+        }
+        function onKey(e) {
+          if (e.key === "Escape") setOpen(false);
+        }
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return function () {
+          document.removeEventListener("mousedown", onDown);
+          document.removeEventListener("keydown", onKey);
+        };
+      }, [open]);
+      var current = null;
+      for (var i = 0; i < NOTIFY_MODES.length; i++) if (NOTIFY_MODES[i].id === props.mode) current = NOTIFY_MODES[i];
+      var menu = null;
+      if (open) {
+        var items = NOTIFY_MODES.map(function (m) {
+          var sel = m.id === props.mode;
+          return React.createElement("button", {
+            key: m.id, type: "button",
+            onClick: function () {
+              setOpen(false);
+              setNotifyMode(m.id);
+              props.onSelect(m.id);
+            },
+            style: {
+              display: "flex", alignItems: "center", gap: "8px", width: "100%", textAlign: "left",
+              background: sel ? T.hoverBg : "transparent", border: "none", borderRadius: "8px",
+              color: sel ? T.label : T.secondary, padding: "7px 10px", cursor: "pointer", fontSize: "13px", font: "inherit",
+            },
+          },
+            React.createElement("span", { style: { flex: "1" } }, m.label),
+            sel ? React.createElement("span", { style: { color: T.brand } }, "\u2713") : null,
+          );
+        });
+        menu = React.createElement("div", {
+          style: {
+            position: "fixed", top: pos != null ? pos.top : 0, right: pos != null ? pos.right : 0,
+            zIndex: 2000, minWidth: "150px",
+            background: T.bg, border: T.border, borderRadius: "12px", boxShadow: T.shadow, padding: "4px",
+          },
+        }, items);
+      }
+      return React.createElement(React.Fragment, null,
+        React.createElement("button", {
+          type: "button",
+          ref: anchorRef,
+          className: "tp-sel",
+          onClick: function () {
+            if (anchorRef.current != null) {
+              var r = anchorRef.current.getBoundingClientRect();
+              setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+            }
+            setOpen(!open);
+          },
+          style: notifySelectorStyle,
+        }, current != null ? current.label : "", React.createElement(ChevronDownIcon, { size: 14 })),
+        menu,
+      );
+    }
+
     function SettingsNotifySection() {
       var modeRef = React.useState(getNotifyMode());
       var mode = modeRef[0];
@@ -1305,60 +1406,71 @@ window.__ModuleLoader__.load({
       var permRef = React.useState(notifySupported() ? Notification.permission : "denied");
       var perm = permRef[0];
       var setPerm = permRef[1];
+      var fbRef = React.useState(null);
+      var fb = fbRef[0];
+      var setFb = fbRef[1];
       var current = null;
       for (var i = 0; i < NOTIFY_MODES.length; i++) if (NOTIFY_MODES[i].id === mode) current = NOTIFY_MODES[i];
-      var permLine = null;
+      function sendTest() {
+        if (!notifySupported() || Notification.permission !== "granted") {
+          setFb({ kind: "err", text: "\u6743\u9650\u672a\u6388\u4e88\uff0c\u65e0\u6cd5\u53d1\u9001" });
+          return;
+        }
+        try {
+          var n = new Notification("\u6d4b\u8bd5\u901a\u77e5", { body: "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2", tag: "dsh-notify-test" });
+          n.onclick = function () {
+            try { window.focus(); } catch {}
+            try { n.close(); } catch {}
+          };
+          setFb({ kind: "ok", text: "\u5df2\u53d1\u9001\uff0c\u8bf7\u67e5\u770b\u7cfb\u7edf\u901a\u77e5\u4e2d\u5fc3" });
+        } catch (e) {
+          setFb({ kind: "err", text: "\u53d1\u9001\u5931\u8d25\uff1a" + (e && e.message ? e.message : String(e)) });
+        }
+      }
+      function requestPerm() {
+        requestNotifyPermission(function (r) {
+          setPerm(r);
+          if (r === "granted") sendTest();
+        });
+      }
+      var permDesc = null;
+      var permAction = null;
       if (perm === "granted") {
-        permLine = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontSize: "11px", color: T.success } },
-          React.createElement("span", { style: { flex: "1" } }, "\u2713 \u6d4f\u89c8\u5668\u901a\u77e5\u5df2\u6388\u6743"),
-          React.createElement("button", {
-            type: "button",
-            onClick: function () {
-              try {
-                var n = new Notification("\u6d4b\u8bd5\u901a\u77e5", { body: "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2" });
-                n.onclick = function () { try { window.focus(); n.close(); } catch {} };
-              } catch {}
-            },
-            style: { border: "1px solid rgba(255,255,255,0.10)", background: T.hoverBg, color: T.label, borderRadius: "8px", padding: "4px 10px", cursor: "pointer", fontSize: "11px", font: "inherit" },
-          }, "\u6d4b\u8bd5\u901a\u77e5"),
-        );
+        permDesc = React.createElement("span", null, "\u5df2\u6388\u6743\u2014\u2014\u5bf9\u8bdd\u5b8c\u6210\u65f6\u6309\u4e0a\u8ff0\u65f6\u673a\u5f39\u51fa\u7cfb\u7edf\u901a\u77e5");
+        permAction = React.createElement("button", {
+          type: "button",
+          onClick: sendTest,
+          style: notifySelectorStyle,
+        }, "\u6d4b\u8bd5\u901a\u77e5");
       } else if (perm === "denied") {
-        permLine = React.createElement("div", { style: { marginTop: "12px", fontSize: "11px", color: T.error } },
-          "\u6d4f\u89c8\u5668\u901a\u77e5\u5df2\u88ab\u62d2\u7edd\uff0c\u8bf7\u5728\u6d4f\u89c8\u5668\u7ad9\u70b9\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u672c\u7ad9\u901a\u77e5");
+        permDesc = React.createElement("span", { style: { color: T.error } }, "\u5df2\u88ab\u62d2\u7edd\uff1a\u8bf7\u5728\u6d4f\u89c8\u5668\u7ad9\u70b9\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u672c\u7ad9\u901a\u77e5");
+        permAction = null;
       } else {
-        permLine = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontSize: "11px", color: T.tertiary } },
-          React.createElement("span", { style: { flex: "1" } }, "\u6d4f\u89c8\u5668\u901a\u77e5\u672a\u6388\u6743"),
-          React.createElement("button", {
-            type: "button",
-            onClick: function () {
-              requestNotifyPermission(function (r) { setPerm(r); });
-            },
-            style: { border: "none", background: T.brand, color: "#0d1117", borderRadius: "8px", padding: "4px 10px", cursor: "pointer", fontSize: "11px", fontWeight: "600", font: "inherit" },
-          }, "\u8bf7\u6c42\u6388\u6743"),
-        );
+        permDesc = React.createElement("span", null, "\u672a\u6388\u6743\u2014\u2014\u9700\u5148\u70b9\u51fb\u201c\u8bf7\u6c42\u6388\u6743\u201d\u5e76\u5728\u6d4f\u89c8\u5668\u63d0\u793a\u4e2d\u5141\u8bb8");
+        permAction = React.createElement("button", {
+          type: "button",
+          onClick: requestPerm,
+          style: Object.assign({}, notifySelectorStyle, { background: T.brand, color: "#0d1117" }),
+        }, "\u8bf7\u6c42\u6388\u6743");
       }
       return React.createElement("div", { style: pageWrapStyle },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: "14px" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: "6px" } },
           React.createElement("span", { style: { fontSize: "15px", fontWeight: "700", color: T.label, flex: "1" } }, "\u901a\u77e5"),
         ),
-        React.createElement("div", { style: Object.assign({}, cardStyle2, { marginTop: "12px" }) },
-          React.createElement("div", { style: { display: "flex", gap: "8px" } },
-            NOTIFY_MODES.map(function (m) {
-              var on = mode === m.id;
-              return React.createElement("button", {
-                key: m.id, type: "button",
-                onClick: function () { setNotifyMode(m.id); setMode(m.id); },
-                style: {
-                  flex: "1 1 0", border: "1px solid " + (on ? T.borderStrong : "rgba(255,255,255,0.10)"),
-                  background: on ? T.hoverBg : "transparent", color: on ? T.label : T.tertiary,
-                  borderRadius: "10px", padding: "7px 10px", cursor: "pointer", fontSize: "12px", font: "inherit",
-                },
-              }, m.label);
-            }),
+        React.createElement("div", { style: notifyRowStyle },
+          React.createElement("div", { style: notifyTextStyle },
+            React.createElement("div", { style: notifyTitleStyle }, "\u901a\u77e5\u65f6\u673a"),
+            React.createElement("div", { style: notifyDescStyle }, current != null ? current.desc : ""),
           ),
-          React.createElement("div", { style: { marginTop: "10px", fontSize: "11.5px", lineHeight: "18px", color: T.tertiary } },
-            current != null ? current.desc : ""),
-          permLine,
+          React.createElement(NotifyModeSelect, { mode: mode, onSelect: setMode }),
+        ),
+        React.createElement("div", { style: Object.assign({}, notifyRowStyle, { borderBottom: "none" }) },
+          React.createElement("div", { style: notifyTextStyle },
+            React.createElement("div", { style: notifyTitleStyle }, "\u6d4f\u89c8\u5668\u901a\u77e5"),
+            React.createElement("div", { style: notifyDescStyle }, permDesc),
+            fb != null ? React.createElement("div", { style: { fontSize: "11px", lineHeight: "16px", color: fb.kind === "ok" ? T.success : T.error } }, fb.text) : null,
+          ),
+          permAction,
         ),
       );
     }
@@ -1384,7 +1496,7 @@ window.__ModuleLoader__.load({
       if (typeof document !== "undefined" && document.querySelector("style[data-plugin=dsh-plugin-balance]") == null) {
         var tag = document.createElement("style");
         tag.setAttribute("data-plugin", "dsh-plugin-balance");
-        tag.textContent = ".tp-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 0.35s ease}.tp-collapse.tp-open{grid-template-rows:1fr}.tp-collapse>.tp-inner{overflow:hidden;min-height:0}.tp-grow{transform-origin:286px 18px;animation:tp-grow 0.35s cubic-bezier(0.16,1,0.3,1)}@keyframes tp-grow{from{transform:scale(0.85)}to{transform:scale(1)}}.tp-shrink{pointer-events:none;animation:tp-shrink 0.35s cubic-bezier(0.4,0,1,1) forwards}@keyframes tp-shrink{from{transform:scale(1)}to{transform:scale(0.02)}}.tp-spin{animation:tp-spin 1s linear infinite;transform-origin:50% 50%}@keyframes tp-spin{to{transform:rotate(360deg)}}.tp-icobtn{background:transparent;border-radius:12px;transition:background 0.15s ease}.tp-icobtn:hover{background:rgba(255,255,255,0.06)}.tp-pulse{animation:tp-pulse 1.6s ease-in-out infinite}@keyframes tp-pulse{0%,100%{opacity:1}50%{opacity:0.4}}";
+        tag.textContent = ".tp-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 0.35s ease}.tp-collapse.tp-open{grid-template-rows:1fr}.tp-collapse>.tp-inner{overflow:hidden;min-height:0}.tp-grow{transform-origin:286px 18px;animation:tp-grow 0.35s cubic-bezier(0.16,1,0.3,1)}@keyframes tp-grow{from{transform:scale(0.85)}to{transform:scale(1)}}.tp-shrink{pointer-events:none;animation:tp-shrink 0.35s cubic-bezier(0.4,0,1,1) forwards}@keyframes tp-shrink{from{transform:scale(1)}to{transform:scale(0.02)}}.tp-spin{animation:tp-spin 1s linear infinite;transform-origin:50% 50%}@keyframes tp-spin{to{transform:rotate(360deg)}}.tp-icobtn{background:transparent;border-radius:12px;transition:background 0.15s ease}.tp-icobtn:hover{background:rgba(255,255,255,0.06)}.tp-sel:hover{background:var(--dsw-alias-interactive-bg-hover)}.tp-pulse{animation:tp-pulse 1.6s ease-in-out infinite}@keyframes tp-pulse{0%,100%{opacity:1}50%{opacity:0.4}}";
         document.head.appendChild(tag);
       }
       ctx.slots.inject("shell.overlay", function () {
