@@ -1500,9 +1500,6 @@ window.__ModuleLoader__.load({
       var fbRef = React.useState(null);
       var fb = fbRef[0];
       var setFb = fbRef[1];
-      var fb2Ref = React.useState(null);
-      var fb2 = fb2Ref[0];
-      var setFb2 = fb2Ref[1];
       var current = null;
       for (var i = 0; i < NOTIFY_MODES.length; i++) if (NOTIFY_MODES[i].id === mode) current = NOTIFY_MODES[i];
       function sendTest() {
@@ -1516,7 +1513,7 @@ window.__ModuleLoader__.load({
             try { window.focus(); } catch {}
             try { n.close(); } catch {}
           };
-          setFb({ kind: "ok", text: "\u5df2\u53d1\u9001\u3002\u82e5\u672a\u51fa\u73b0\uff0c\u8bf7\u68c0\u67e5\u201c\u7cfb\u7edf\u8bbe\u7f6e \u2192 \u901a\u77e5\u201d\u4e2d\u8be5\u6d4f\u89c8\u5668\u7684\u901a\u77e5\u6743\u9650" });
+          setFb(null);
         } catch (e) {
           setFb({ kind: "err", text: "\u53d1\u9001\u5931\u8d25\uff1a" + (e && e.message ? e.message : String(e)) });
         }
@@ -1562,7 +1559,7 @@ window.__ModuleLoader__.load({
           React.createElement("div", { style: notifyTextStyle },
             React.createElement("div", { style: notifyTitleStyle }, "\u7cfb\u7edf\u901a\u77e5"),
             React.createElement("div", { style: notifyDescStyle }, permDesc),
-            fb != null ? React.createElement("div", { style: { fontSize: "11px", lineHeight: "16px", color: fb.kind === "ok" ? T.success : T.error } }, fb.text) : null,
+            fb != null && fb.kind === "err" ? React.createElement("div", { style: { fontSize: "11px", lineHeight: "16px", color: T.error } }, fb.text) : null,
           ),
           permAction,
         ),
@@ -1570,13 +1567,11 @@ window.__ModuleLoader__.load({
           React.createElement("div", { style: notifyTextStyle },
             React.createElement("div", { style: notifyTitleStyle }, "\u6d4f\u89c8\u5668\u901a\u77e5"),
             React.createElement("div", { style: notifyDescStyle }, "\u9875\u9762\u5185\u5f39\u51fa\u6a2a\u5e45\u63d0\u793a\uff0c\u65e0\u9700\u6388\u6743\uff0c\u9875\u9762\u5f00\u7740\u5373\u53ef\u6536\u5230"),
-            fb2 != null ? React.createElement("div", { style: { fontSize: "11px", lineHeight: "16px", color: T.success } }, fb2.text) : null,
           ),
           React.createElement("button", {
             type: "button",
             onClick: function () {
               pushNotifyToast("\u6d4b\u8bd5\u901a\u77e5", "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2");
-              setFb2({ text: "\u5df2\u5f39\u51fa\uff0c\u8bf7\u67e5\u770b\u9875\u9762\u4e0a\u65b9" });
             },
             style: notifySelectorStyle,
           }, "\u6d4b\u8bd5\u901a\u77e5"),
