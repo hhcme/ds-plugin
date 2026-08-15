@@ -102,15 +102,14 @@ function dayKey(ts) {
 }
 
 // Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
-// from every session in the corpus into a continuous day series plus a
-// day×hour heatmap, bounded to the last `days` days.
+// from every session in the corpus. The bar-chart series follows the
+// requested `days` window; the calendar heatmap always covers the last
+// MAX_USAGE_DAYS days, independent of that selector.
 async function fetchUsage(ctx, days) {
   const span = Math.min(Math.max(parseInt(days, 10) || 14, 1), MAX_USAGE_DAYS)
   const now = Date.now()
-  const since = now - span * 86400000
+  const since = now - MAX_USAGE_DAYS * 86400000
   const byDay = new Map()
-  const byHour = new Map()
-  const activeSessions = new Set()
   const records = await ctx.sessionQuery.listSessions()
   for (const rec of records) {
     // listSessions returns { header, live, persisted } records — the id lives
@@ -127,7 +126,6 @@ async function fetchUsage(ctx, days) {
       continue
     }
     if (!Array.isArray(events)) continue
-    let touched = false
     for (const ev of events) {
       if (ev == null || ev.type !== 'assistant/chunk') continue
       const chunk = ev.data != null ? ev.data.chunk : undefined
@@ -142,7 +140,6 @@ async function fetchUsage(ctx, days) {
       const cacheWrite = u.cacheWriteTokens || 0
       const total = input + output + reasoning + cacheRead + cacheWrite
       if (!(total > 0)) continue
-      touched = true
       const dk = dayKey(ts)
       let d = byDay.get(dk)
       if (d == null) {
@@ -156,22 +153,21 @@ async function fetchUsage(ctx, days) {
       d.cacheWrite += cacheWrite
       d.total += total
       d.steps += 1
-      const hk = dk + '|' + new Date(ts).getHours()
-      byHour.set(hk, (byHour.get(hk) || 0) + total)
     }
-    if (touched) activeSessions.add(rec.header.id)
   }
-  // Continuous ascending day axis for the whole window.
+  // Continuous ascending day axis for the selected bar-chart window.
   const series = []
   for (let i = span - 1; i >= 0; i--) {
     const dk = dayKey(now - i * 86400000)
     const d = byDay.get(dk)
     series.push(Object.assign({ date: dk }, d != null ? d : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0 }))
   }
-  const heatmap = []
-  for (let i = 0; i < span; i++) {
-    const dk = dayKey(now - (span - 1 - i) * 86400000)
-    for (let h = 0; h < 24; h++) heatmap.push({ day: i, hour: h, date: dk, total: byHour.get(dk + '|' + h) || 0 })
+  // Calendar heatmap: one cell per day, always the full 90-day window.
+  const heatDays = []
+  for (let i = MAX_USAGE_DAYS - 1; i >= 0; i--) {
+    const dk = dayKey(now - i * 86400000)
+    const d = byDay.get(dk)
+    heatDays.push({ date: dk, total: d != null ? d.total : 0 })
   }
   let total = 0
   let activeDays = 0
@@ -184,9 +180,9 @@ async function fetchUsage(ctx, days) {
     span,
     firstDate: series[0].date,
     lastDate: series[series.length - 1].date,
-    summary: { total, avgPerDay: Math.round(total / span), activeDays, sessionCount: activeSessions.size },
+    summary: { total, avgPerDay: Math.round(total / span), activeDays },
     series,
-    heatmap,
+    heatDays,
   }
 }
 

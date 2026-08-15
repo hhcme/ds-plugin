@@ -43,12 +43,6 @@ window.__ModuleLoader__.load({
     function pad2(n) {
       return (n < 10 ? "0" : "") + n;
     }
-    function mdShort(date) {
-      if (date == null || date.length < 10) return "";
-      var m = parseInt(date.slice(5, 7), 10);
-      var d = parseInt(date.slice(8, 10), 10);
-      return m + "/" + d;
-    }
     // Zero-filled skeletons: while the first fetch is in flight the charts
     // render these placeholders instead of a loading state, so the page
     // never looks stuck (and an all-zero answer renders the same shapes).
@@ -61,13 +55,12 @@ window.__ModuleLoader__.load({
       }
       return out;
     }
-    function zeroUsageGrid(span) {
+    function zeroUsageDays(span) {
       var out = [];
       var now = Date.now();
       for (var d = 0; d < span; d++) {
         var t = new Date(now - (span - 1 - d) * 86400000);
-        var dk = t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate());
-        for (var h = 0; h < 24; h++) out.push({ day: d, hour: h, date: dk, total: 0 });
+        out.push({ date: t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate()), total: 0 });
       }
       return out;
     }
@@ -609,7 +602,6 @@ window.__ModuleLoader__.load({
         { label: "\u603b Token", value: fmt(s.total) },
         { label: "\u65e5\u5747", value: fmt(s.avgPerDay) },
         { label: "\u6d3b\u8dc3\u5929\u6570", value: s.activeDays + " / " + props.span },
-        { label: "\u4f1a\u8bdd\u6570", value: String(s.sessionCount) },
       ];
       return React.createElement("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
         cards.map(function (c) {
@@ -669,51 +661,72 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function UsageHeatmap(props) {
-      var span = props.span;
-      var data = props.data || [];
+    // Calendar heatmap: one cell per day over the last 90 days (three
+    // months), days flowing horizontally week by week, Monday on top.
+    // Independent of the range selector — always the fixed 90-day window.
+    function UsageCalendarHeatmap(props) {
+      var days = props.days || [];
       var max = 0;
-      for (var i = 0; i < data.length; i++) if (data[i].total > max) max = data[i].total;
-      // Days flow horizontally (one column per day); label every day for the
-      // 7/14-day windows, every second day for the wide 30-day window.
-      var labelEvery = span > 14 ? 2 : 1;
-      var rows = [];
-      for (var h = 0; h < 24; h++) {
-        var cells = [];
-        for (var d = 0; d < span; d++) {
-          var cell = data[d * 24 + h] || { day: d, hour: h, date: "", total: 0 };
-          var active = cell.total > 0;
-          var isHover = props.hover != null && props.hover.day === d && props.hover.hour === h;
-          var a = max > 0 ? Math.log1p(cell.total) / Math.log1p(max) : 0;
-          var alpha = 0.07 + a * 0.93;
-          cells.push(React.createElement("div", {
-            key: d,
-            title: cell.date + " " + pad2(h) + ":00 \u00b7 " + (active ? fmt(cell.total) + " tokens" : "\u65e0\u6d88\u8017"),
-            onMouseEnter: function () { props.onHover({ day: d, hour: h, date: cell.date, total: cell.total }); },
-            onMouseLeave: function () { props.onHover(null); },
-            style: {
-              width: "12px", height: "12px", flexShrink: 0, borderRadius: "2px", margin: "1px",
-              background: active ? "rgba(77, 141, 255, " + alpha.toFixed(3) + ")" : "rgba(255,255,255,0.05)",
-              boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
-            },
-          }));
+      for (var i = 0; i < days.length; i++) if (days[i].total > max) max = days[i].total;
+      var lead = days.length > 0 ? (new Date(days[0].date + "T00:00:00").getDay() + 6) % 7 : 0;
+      var weekCount = Math.ceil((lead + days.length) / 7);
+      var weekdayNames = ["\u4e00", "\u4e8c", "\u4e09", "\u56db", "\u4e94", "\u516d", "\u65e5"];
+      var cellW = 13;
+      var cellH = 13;
+      var gap = 2;
+      var colW = cellW + gap * 2;
+      function makeCell(d) {
+        var active = d.total > 0;
+        var isHover = props.hover != null && props.hover.date === d.date;
+        var a = max > 0 ? Math.log1p(d.total) / Math.log1p(max) : 0;
+        var alpha = 0.07 + a * 0.93;
+        return React.createElement("div", {
+          title: d.date + " \u00b7 " + (active ? fmt(d.total) + " tokens" : "\u65e0\u6d88\u8017"),
+          onMouseEnter: function () { props.onHover({ date: d.date, total: d.total }); },
+          onMouseLeave: function () { props.onHover(null); },
+          style: {
+            width: cellW, height: cellH, margin: gap, flexShrink: 0, borderRadius: "3px",
+            background: active ? "rgba(77, 141, 255, " + alpha.toFixed(3) + ")" : "rgba(255,255,255,0.05)",
+            boxShadow: isHover ? "0 0 0 1px " + T.borderStrong : "none",
+          },
+        });
+      }
+      var colEls = [];
+      for (var w = 0; w < weekCount; w++) {
+        var monthLabel = "";
+        for (var r2 = 0; r2 < 7; r2++) {
+          var idx2 = w * 7 + r2 - lead;
+          if (idx2 < 0 || idx2 >= days.length) continue;
+          var probe = new Date(days[idx2].date + "T00:00:00");
+          if (probe.getDate() === 1) {
+            monthLabel = (probe.getMonth() + 1) + "\u6708";
+            break;
+          }
         }
-        rows.push(React.createElement("div", { key: h, style: { display: "flex", alignItems: "center" } },
-          React.createElement("div", { style: { width: "32px", flexShrink: 0, textAlign: "right", paddingRight: "6px", fontSize: "9.5px", color: T.tertiary, fontVariantNumeric: "tabular-nums" } },
-            h % 6 === 0 ? pad2(h) + ":00" : ""),
-          React.createElement("div", { style: { display: "flex" } }, cells),
+        var cells = [];
+        for (var r = 0; r < 7; r++) {
+          var idx = w * 7 + r - lead;
+          if (idx < 0 || idx >= days.length) {
+            cells.push(React.createElement("div", { key: "e" + r, style: { width: cellW, height: cellH, margin: gap, flexShrink: 0 } }));
+            continue;
+          }
+          cells.push(React.createElement("div", { key: idx }, makeCell(days[idx])));
+        }
+        colEls.push(React.createElement("div", { key: w, style: { display: "flex", flexDirection: "column", width: colW, flexShrink: 0 } },
+          React.createElement("div", { style: { height: "16px", fontSize: "9px", color: T.tertiary, whiteSpace: "nowrap", display: "flex", alignItems: "flex-end" } }, monthLabel),
+          React.createElement("div", { style: { display: "flex", flexWrap: "wrap", width: colW } }, cells),
         ));
       }
-      var colLabels = [];
-      for (var d2 = 0; d2 < span; d2++) {
-        var head = data[d2 * 24 + 12];
-        colLabels.push(React.createElement("div", { key: d2, style: { width: "14px", flexShrink: 0, textAlign: "center", fontSize: "9px", color: T.tertiary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } },
-          d2 % labelEvery === 0 && head != null ? mdShort(head.date) : ""));
-      }
+      var wdLabels = weekdayNames.map(function (n, r) {
+        return React.createElement("div", { key: r, style: { height: cellH + gap * 2, fontSize: "9px", color: T.tertiary, display: "flex", alignItems: "center", justifyContent: "flex-end", width: "22px" } }, n);
+      });
       return React.createElement("div", { style: { overflowX: "auto" } },
-        React.createElement("div", { style: { display: "inline-block" } },
-          rows,
-          React.createElement("div", { style: { display: "flex", paddingLeft: "32px", marginTop: "4px" } }, colLabels),
+        React.createElement("div", { style: { display: "inline-flex" } },
+          React.createElement("div", { style: { display: "flex", flexDirection: "column", width: "22px", flexShrink: 0 } },
+            React.createElement("div", { style: { height: "16px" } }),
+            wdLabels,
+          ),
+          colEls,
         ),
       );
     }
@@ -802,16 +815,16 @@ window.__ModuleLoader__.load({
       var ready = st.status === "ready" && st.data != null && st.data.ok;
       var data = ready ? st.data : null;
       var series = ready ? (data.series || []) : zeroUsageSeries(span);
-      var grid = ready ? (data.heatmap || []) : zeroUsageGrid(span);
-      var summary = ready ? data.summary : { total: 0, avgPerDay: 0, activeDays: 0, sessionCount: 0 };
+      var grid = ready ? (data.heatDays || []) : zeroUsageDays(90);
+      var summary = ready ? data.summary : { total: 0, avgPerDay: 0, activeDays: 0 };
       var max = 0;
       for (var i = 0; i < series.length; i++) if (series[i].total > max) max = series[i].total;
       var barSub = barHover != null && series[barHover] != null
         ? series[barHover].date + " \u00b7 \u8f93\u5165 " + fmt(series[barHover].input) + " \u00b7 \u8f93\u51fa " + fmt(series[barHover].output) + " \u00b7 \u63a8\u7406 " + fmt(series[barHover].reasoning) + " \u00b7 \u7f13\u5b58\u8bfb " + fmt(series[barHover].cacheRead) + " \u00b7 \u5171 " + fmt(series[barHover].total)
         : "\u6700\u8fd1 " + span + " \u5929 \u00b7 \u6bcf\u65e5\u5cf0\u503c " + fmt(max);
       var heatSub = heatHover != null
-        ? heatHover.date + " " + pad2(heatHover.hour) + ":00 \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
-        : "\u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
+        ? heatHover.date + " \u00b7 " + (heatHover.total > 0 ? fmt(heatHover.total) + " tokens" : "\u65e0\u6d88\u8017")
+        : "\u6700\u8fd1 90 \u5929 \u00b7 \u989c\u8272\u8d8a\u6df1\u6d88\u8017\u8d8a\u9ad8\uff08\u5bf9\u6570\u523b\u5ea6\uff09";
       var body = st.status === "error"
         ? React.createElement("div", { style: Object.assign({}, cardStyle2, { padding: "28px", textAlign: "center", color: T.error }) },
           React.createElement("div", null, "\u52a0\u8f7d\u5931\u8d25\uff1a" + st.error),
@@ -826,8 +839,8 @@ window.__ModuleLoader__.load({
           React.createElement(UsageChartCard, { title: "\u6bcf\u65e5\u6d88\u8017", subtitle: barSub },
             React.createElement(UsageBarChart, { series: series, hover: barHover, onHover: setBarHover }),
           ),
-          React.createElement(UsageChartCard, { title: "\u65f6\u6bb5\u70ed\u529b\u56fe", subtitle: heatSub },
-            React.createElement(UsageHeatmap, { span: span, data: grid, hover: heatHover, onHover: setHeatHover }),
+          React.createElement(UsageChartCard, { title: "\u70ed\u529b\u56fe\uff08\u8fd1 90 \u5929\uff09", subtitle: heatSub },
+            React.createElement(UsageCalendarHeatmap, { days: grid, hover: heatHover, onHover: setHeatHover }),
           ),
         );
 
