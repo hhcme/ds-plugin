@@ -1007,6 +1007,37 @@ window.__ModuleLoader__.load({
         b.insertBefore(holder, b.firstChild);
       }
     }
+    // Classic scrollbars shrink the settings content column when they appear;
+    // reserve the gutter on the panel's vertical scroller so section content
+    // width never shifts. Same React-safe inline-patch philosophy as the nav
+    // icons: an extra inline property React never resets.
+    function patchSettingsPanelGutter() {
+      if (typeof document === "undefined") return;
+      var buttons = document.querySelectorAll("button");
+      for (var i = 0; i < buttons.length; i++) {
+        var b = buttons[i];
+        if (b.getAttribute("data-tp-navicon") !== "1") continue;
+        var root = b;
+        var panel = null;
+        while (root != null && root.parentElement != null) {
+          root = root.parentElement;
+          if (window.getComputedStyle(root).position === "fixed") {
+            panel = root;
+            break;
+          }
+        }
+        if (panel == null || panel.getAttribute("data-tp-gutter") === "1") continue;
+        panel.setAttribute("data-tp-gutter", "1");
+        var els = panel.querySelectorAll("*");
+        for (var k = 0; k < els.length; k++) {
+          if (window.getComputedStyle(els[k]).overflowY === "auto") {
+            els[k].style.scrollbarGutter = "stable";
+            break;
+          }
+        }
+        break;
+      }
+    }
 
     // Sidebar foot, right of the Settings row: appears only when a newer
     // DSH version was discovered; click starts the update flow.
@@ -1120,7 +1151,11 @@ window.__ModuleLoader__.load({
       runtime = ctx;
       ctx.effect(function () {
         patchSettingsNavIcons();
-        var stop = runtime.interval(patchSettingsNavIcons, 1000);
+        patchSettingsPanelGutter();
+        var stop = runtime.interval(function () {
+          patchSettingsNavIcons();
+          patchSettingsPanelGutter();
+        }, 1000);
         return stop;
       });
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
