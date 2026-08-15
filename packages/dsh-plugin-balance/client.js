@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
     var BALANCE_PATH = "/api/dsh-plugin-balance/balance";
     var GIT_PATH = "/api/dsh-plugin-balance/git";
     var USAGE_PATH = "/api/dsh-plugin-balance/usage";
+    var ABOUT_PATH = "/api/dsh-plugin-balance/about";
+    var UPDATE_PATH = "/api/dsh-plugin-balance/update";
     var inject = ["slots", "timer"];
 
     // 60s TTL caches: a value fetched within the last minute is reused in ANY
@@ -890,6 +892,177 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // =========================================================================
+    // 关于 / 更新: about store + background checker, a settings section and a
+    // sidebar-foot action icon that only appears when a newer DSH exists.
+    // =========================================================================
+
+    var updateStore = {
+      data: { status: "idle", about: null, error: null },
+      listeners: [],
+      get: function () { return this.data; },
+      set: function (next) {
+        this.data = next;
+        for (var i = 0; i < this.listeners.length; i++) this.listeners[i](next);
+      },
+      subscribe: function (fn) {
+        this.listeners.push(fn);
+        var self = this;
+        return function () {
+          var i = self.listeners.indexOf(fn);
+          if (i >= 0) self.listeners.splice(i, 1);
+        };
+      },
+    };
+    var updateCache = { at: 0, payload: null };
+    function checkUpdate(force) {
+      var c = updateCache;
+      if (!force && fresh(c.at) && c.payload != null) {
+        updateStore.set({ status: "ready", about: c.payload, error: null });
+        return;
+      }
+      updateStore.set({ status: "checking", about: updateStore.get().about, error: null });
+      fetch(ABOUT_PATH + (force ? "?force=1" : ""))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res != null && res.ok) {
+            updateCache.at = Date.now();
+            updateCache.payload = res;
+            updateStore.set({ status: "ready", about: res, error: null });
+          } else {
+            updateStore.set({ status: "error", about: null, error: (res != null && res.error) || "check failed" });
+          }
+        })
+        .catch(function (error) {
+          updateStore.set({ status: "error", about: null, error: String(error && error.message ? error.message : error) });
+        });
+    }
+    function useUpdateSnapshot() {
+      var ref = React.useState(updateStore.get());
+      var snap = ref[0];
+      var setSnap = ref[1];
+      React.useEffect(function () {
+        setSnap(updateStore.get());
+        return updateStore.subscribe(function (next) { setSnap(next); });
+      }, []);
+      return snap;
+    }
+    function doUpdate(cb) {
+      fetch(UPDATE_PATH, { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (res) { cb(res); })
+        .catch(function (error) { cb({ ok: false, error: String(error && error.message ? error.message : error) }); });
+    }
+    function confirmAndUpdate(about) {
+      if (typeof window !== "undefined" && !window.confirm("\u53d1\u73b0\u65b0\u7248\u672c " + about.latest + "\uff08\u5f53\u524d " + about.installed + "\uff09\u3002\u66f4\u65b0\u4f1a\u91cd\u542f DSH \u670d\u52a1\uff0c\u9875\u9762\u4f1a\u77ed\u6682\u65ad\u5f00\uff0c\u7ee7\u7eed\u5417\uff1f")) return;
+      doUpdate(function (res) {
+        if (res != null && res.ok) {
+          updateStore.set({ status: "updating", about: updateStore.get().about, error: null });
+        } else if (typeof window !== "undefined") {
+          window.alert((res != null && res.error) || "\u66f4\u65b0\u5931\u8d25");
+        }
+      });
+    }
+    function UpdateIcon(props) {
+      return React.createElement("svg", {
+        viewBox: "0 0 16 16", width: props.size || 16, height: props.size || 16,
+        fill: "none", stroke: "currentColor", strokeWidth: 1.5,
+        strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true,
+        style: { display: "block" },
+      },
+        React.createElement("path", { d: "M8 13.5 a5.5 5.5 0 1 1 3.9 -9.2" }),
+        React.createElement("path", { d: "M11.5 1.8 v3 h-3" }),
+      );
+    }
+
+    // Sidebar foot, right of the Settings row: appears only when a newer
+    // DSH version was discovered; click starts the update flow.
+    function SidebarUpdateAction() {
+      var snap = useUpdateSnapshot();
+      React.useEffect(function () {
+        checkUpdate(false);
+        var stop = runtime.interval(function () { checkUpdate(false); }, 30 * 60000);
+        return stop;
+      }, []);
+      var about = snap.about;
+      if (snap.status === "updating") {
+        return React.createElement("span", { title: "\u66f4\u65b0\u4e2d\u2026", style: { color: T.brand, display: "grid", placeItems: "center", padding: "5px" } },
+          React.createElement("span", { style: { width: "11px", height: "11px", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.15)", borderTopColor: T.brand, display: "inline-block", animation: "tp-spin 0.8s linear infinite" } }),
+        );
+      }
+      if (snap.status !== "ready" || about == null || about.checkError != null || about.upToDate || about.latest == null) return null;
+      return React.createElement("button", {
+        type: "button",
+        title: "\u53d1\u73b0\u65b0\u7248\u672c " + about.latest + "\uff0c\u70b9\u51fb\u66f4\u65b0",
+        onClick: function () { confirmAndUpdate(about); },
+        style: { background: "transparent", border: "none", borderRadius: "8px", padding: "5px", cursor: "pointer", color: T.brand, display: "grid", placeItems: "center" },
+      }, React.createElement(UpdateIcon, { size: 15 }));
+    }
+
+    function SettingsAboutSection() {
+      var snap = useUpdateSnapshot();
+      var busyRef = React.useState(false);
+      var busy = busyRef[0];
+      var setBusy = busyRef[1];
+      React.useEffect(function () {
+        checkUpdate(false);
+      }, []);
+      var about = snap.about;
+      var status = snap.status;
+      var row = function (label, value, color) {
+        return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", padding: "6px 0" } },
+          React.createElement("span", { style: { flex: "1", color: T.tertiary, fontWeight: "600" } }, label),
+          React.createElement("span", { style: { color: color || T.label, fontVariantNumeric: "tabular-nums", textAlign: "right" } }, value),
+        );
+      };
+      var statusLine = null;
+      if (status === "checking") {
+        statusLine = React.createElement("span", { style: { color: T.tertiary, fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" } },
+          React.createElement("span", { style: { width: "10px", height: "10px", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.15)", borderTopColor: T.brand, display: "inline-block", animation: "tp-spin 0.8s linear infinite" } }),
+          "\u6b63\u5728\u68c0\u67e5\u66f4\u65b0\u2026",
+        );
+      } else if (about != null && about.checkError != null) {
+        statusLine = React.createElement("span", { style: { color: T.error, fontSize: "11px" } }, "\u68c0\u67e5\u5931\u8d25\uff1a" + about.checkError);
+      } else if (about != null && about.latest != null) {
+        statusLine = about.upToDate
+          ? React.createElement("span", { style: { color: T.success, fontSize: "11px" } }, "\u2713 \u5df2\u662f\u6700\u65b0\u7248\u672c")
+          : React.createElement("span", { style: { color: T.brand, fontSize: "11px" } }, "\u53d1\u73b0\u65b0\u7248\u672c " + about.latest + (about.publishedAt != null ? " \u00b7 \u53d1\u5e03\u4e8e " + String(about.publishedAt).slice(0, 10) : ""));
+      }
+      var actionArea = null;
+      if (status === "updating") {
+        actionArea = React.createElement("div", { style: { marginTop: "14px", color: T.brand, fontSize: "12px" } },
+          "\u66f4\u65b0\u5df2\u542f\u52a8\uff1a\u670d\u52a1\u5373\u5c06\u91cd\u542f\uff0c\u7a0d\u540e\u5237\u65b0\u9875\u9762\u5373\u53ef\uff08\u65e5\u5fd7\uff1a~/.dsh/dsh-web-update.log\uff09");
+      } else {
+        actionArea = React.createElement("div", { style: { display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap" } },
+          React.createElement("button", {
+            type: "button",
+            disabled: status === "checking" || busy,
+            onClick: function () { setBusy(true); checkUpdate(true); setBusy(false); },
+            style: { border: "1px solid rgba(255,255,255,0.10)", background: T.hoverBg, color: T.label, borderRadius: "8px", padding: "5px 12px", cursor: "pointer", fontSize: "12px", font: "inherit" },
+          }, "\u68c0\u67e5\u66f4\u65b0"),
+          about != null && !about.upToDate && about.checkError == null && about.latest != null
+            ? React.createElement("button", {
+              type: "button",
+              onClick: function () { confirmAndUpdate(about); },
+              style: { border: "none", background: T.brand, color: "#0d1117", borderRadius: "8px", padding: "5px 12px", cursor: "pointer", fontSize: "12px", fontWeight: "600", font: "inherit" },
+            }, "\u66f4\u65b0\u5230 " + about.latest)
+            : null,
+        );
+      }
+      return React.createElement("div", { style: pageWrapStyle },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: "14px" } },
+          React.createElement("span", { style: { fontSize: "15px", fontWeight: "700", color: T.label, flex: "1" } }, "\u5173\u4e8e"),
+        ),
+        React.createElement("div", { style: Object.assign({}, cardStyle2, { marginTop: "12px" }) },
+          row("DSH \u7248\u672c", about != null && about.installed != null ? about.installed : "\u2014"),
+          row("\u63d2\u4ef6\u7248\u672c", about != null && about.pluginVersion != null ? about.pluginVersion : "\u2014"),
+          row("\u6700\u65b0\u7248\u672c", about != null && about.latest != null ? about.latest : "\u2014"),
+          React.createElement("div", { style: { padding: "6px 0" } }, statusLine),
+          actionArea,
+        ),
+      );
+    }
+
     function apply(ctx) {
       runtime = ctx;
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
@@ -913,7 +1086,12 @@ window.__ModuleLoader__.load({
         return disposeStats;
       });
       ctx.slots.inject("settings.section", function () {
-        return ctx.slots.register({ name: "settings.section", id: "usage", order: 25, label: "\u4f7f\u7528\u60c5\u51b5" }, SettingsUsageSection);
+        var disposeUsage = ctx.slots.register({ name: "settings.section", id: "usage", order: 25, label: "\u4f7f\u7528\u60c5\u51b5" }, SettingsUsageSection);
+        var disposeAbout = ctx.slots.register({ name: "settings.section", id: "about", order: 30, label: "\u5173\u4e8e" }, SettingsAboutSection);
+        return function () { disposeUsage(); disposeAbout(); };
+      });
+      ctx.slots.inject("sidebar.footer.action", function () {
+        return ctx.slots.register({ name: "sidebar.footer.action", id: "update-action", order: 10 }, SidebarUpdateAction);
       });
     }
 

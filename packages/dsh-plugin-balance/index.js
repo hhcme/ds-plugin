@@ -2,7 +2,13 @@
 // Registers same-origin JSON routes the browser panel fetches:
 // - GET /api/dsh-plugin-balance/balance   — DeepSeek API balance (key resolved per request, never leaves the host)
 // - GET /api/dsh-plugin-balance/git?sessionId=… — git status of the session's workspace
-// - GET /api/dsh-plugin-balance/usage?days=… — cross-session token usage history (daily series + day×hour heatmap)
+// - GET /api/dsh-plugin-balance/usage — cross-session token usage history (daily series, model-split)
+// - GET /api/dsh-plugin-balance/about — installed/latest DSH version (registry check via npm view)
+// - POST /api/dsh-plugin-balance/update — one-click DSH self-update (detached npm exec + graceful exit)
+
+import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 
 export const name = 'dsh-plugin-balance'
 export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'sessionQuery', 'sessionPersistence']
@@ -10,7 +16,51 @@ export const inject = ['webServer', 'credentials', 'sessions', 'shell', 'session
 const BALANCE_PATH = '/api/dsh-plugin-balance/balance'
 const GIT_PATH = '/api/dsh-plugin-balance/git'
 const USAGE_PATH = '/api/dsh-plugin-balance/usage'
+const ABOUT_PATH = '/api/dsh-plugin-balance/about'
+const UPDATE_PATH = '/api/dsh-plugin-balance/update'
 const MAX_USAGE_DAYS = 180
+
+const pluginVersion = (() => {
+  try {
+    const p = new URL('./package.json', import.meta.url)
+    return JSON.parse(fs.readFileSync(p, 'utf8')).version
+  } catch {
+    return 'unknown'
+  }
+})()
+
+// The web process boots as `node …/.bin/dsh web`; argv[1] is the bin shim.
+// Resolve its real path and climb to the @deepseek-ai/dsh package root.
+function installedDshVersion() {
+  try {
+    const bin = process.argv[1]
+    if (bin == null) return undefined
+    let dir = path.dirname(fs.realpathSync(bin))
+    for (let i = 0; i < 8; i++) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+        if (pkg.name === '@deepseek-ai/dsh') return pkg.version
+      } catch {}
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch {}
+  return undefined
+}
+
+// Numeric-segment compare so "0.1.0-rc.10" > "0.1.0-rc.6".
+function cmpVersions(a, b) {
+  const pa = String(a).split(/[^0-9]+/).filter(Boolean).map(Number)
+  const pb = String(b).split(/[^0-9]+/).filter(Boolean).map(Number)
+  const n = Math.max(pa.length, pb.length)
+  for (let i = 0; i < n; i++) {
+    const x = pa[i] || 0
+    const y = pb[i] || 0
+    if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -182,6 +232,62 @@ async function fetchUsage(ctx) {
   }
 }
 
+// ---- version check & self-update ------------------------------------------
+
+async function npmView(ctx, args) {
+  const spec = ctx.shell.resolve({ command: 'npm view ' + args, timeoutMs: 30000, stdoutMaxBytes: 262144 })
+  const result = await ctx.shell.run(spec)
+  if (result.exitCode !== 0) throw new Error('npm view exited ' + result.exitCode)
+  return textOf(result).trim()
+}
+
+async function fetchLatestInfo(ctx) {
+  try {
+    const tagsRaw = await npmView(ctx, '@deepseek-ai/dsh dist-tags --json')
+    const tags = JSON.parse(tagsRaw)
+    const latest = tags != null ? tags.latest : undefined
+    let publishedAt
+    try {
+      const timeRaw = await npmView(ctx, '@deepseek-ai/dsh time --json')
+      const time = JSON.parse(timeRaw)
+      if (latest != null && time != null && time[latest] != null) publishedAt = time[latest]
+    } catch {}
+    return { latest, publishedAt }
+  } catch (error) {
+    // npm view failed (network/mirror): fall back to the canonical registry.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+    try {
+      const res = await fetch('https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest', { signal: controller.signal })
+      const data = await res.json()
+      return { latest: data != null ? data.version : undefined, publishedAt: undefined }
+    } catch {
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
+let aboutCache = { at: 0, payload: null }
+
+async function fetchAbout(ctx, force) {
+  const now = Date.now()
+  if (!force && aboutCache.payload != null && (now - aboutCache.at) < 60000) return aboutCache.payload
+  const installed = installedDshVersion()
+  let payload
+  try {
+    const info = await fetchLatestInfo(ctx)
+    const latest = info.latest
+    const upToDate = latest != null && installed != null ? cmpVersions(installed, latest) >= 0 : true
+    payload = { ok: true, installed, pluginVersion, latest, upToDate, publishedAt: info.publishedAt, checkError: undefined, checkedAt: now }
+  } catch (error) {
+    payload = { ok: true, installed, pluginVersion, latest: undefined, upToDate: true, publishedAt: undefined, checkError: error && error.message ? error.message : String(error), checkedAt: now }
+  }
+  aboutCache = { at: now, payload }
+  return payload
+}
+
 export function apply(ctx) {
   const disposeBalance = ctx.webServer.register({
     kind: 'exact',
@@ -218,9 +324,52 @@ export function apply(ctx) {
       }
     },
   })
+  const disposeAbout = ctx.webServer.register({
+    kind: 'exact',
+    path: ABOUT_PATH,
+    async handler(req, res) {
+      try {
+        const url = new URL(req.url, 'http://dsh.internal')
+        sendJson(res, 200, await fetchAbout(ctx, url.searchParams.get('force') === '1'))
+      } catch (error) {
+        sendJson(res, 200, { ok: false, error: error && error.message ? error.message : String(error) })
+      }
+    },
+  })
+  const disposeUpdate = ctx.webServer.register({
+    kind: 'exact',
+    path: UPDATE_PATH,
+    async handler(req, res) {
+      try {
+        const about = await fetchAbout(ctx, true)
+        if (about.checkError != null || about.latest == null) {
+          sendJson(res, 200, { ok: false, error: '\u68c0\u67e5\u66f4\u65b0\u5931\u8d25\uff0c\u672a\u6267\u884c\u66f4\u65b0\uff1a' + (about.checkError || 'unknown') })
+          return
+        }
+        if (about.upToDate) {
+          sendJson(res, 200, { ok: false, error: '\u5df2\u662f\u6700\u65b0\u7248\u672c ' + about.installed + '\uff0c\u65e0\u9700\u66f4\u65b0' })
+          return
+        }
+        // Self-update: a detached shell sleeps while this process exits, then
+        // boots the fresh install with the same `npm exec … web` form the user
+        // launched the server with. Output lands in ~/.dsh/dsh-web-update.log.
+        const home = process.env.HOME || process.env.USERPROFILE || '.'
+        const logFile = path.join(home, '.dsh', 'dsh-web-update.log')
+        const script = 'sleep 4; exec npm exec --yes @deepseek-ai/dsh web >> "' + logFile.replace(/"/g, '\\"') + '" 2>&1'
+        const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore', env: process.env })
+        child.unref()
+        sendJson(res, 200, { ok: true, message: '\u66f4\u65b0\u5df2\u542f\u52a8\uff08' + about.installed + ' \u2192 ' + about.latest + '\uff09\uff0c\u670d\u52a1\u5373\u5c06\u91cd\u542f' })
+        setTimeout(() => process.exit(0), 1500)
+      } catch (error) {
+        sendJson(res, 200, { ok: false, error: error && error.message ? error.message : String(error) })
+      }
+    },
+  })
   return () => {
     disposeBalance()
     disposeGit()
     disposeUsage()
+    disposeAbout()
+    disposeUpdate()
   }
 }
