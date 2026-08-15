@@ -154,16 +154,45 @@ function dayKey(ts) {
 // Aggregate per-step usage events (assistant/chunk → chunk.type === "usage")
 // from every session in the corpus into one continuous 180-day daily series.
 // The client derives both the 7/14/30-day bar chart and the calendar heatmap
-// from this single fixed window, so the selector never refetches. The result
-// is day-granular history: a 5-minute server cache absorbs the client's
-// 60s refresh, so the expensive full-log scan runs at most ~12×/hour instead
-// of 60×/hour while the page is open.
+// from this single fixed window, so the selector never refetches.
+//
+// Two performance layers keep this cheap at any corpus size:
+// 1. A 5-minute result cache absorbs the client's 60s refresh.
+// 2. A per-session incremental cache keyed by the persisted artifact's
+//    mtime+size (via locate + stat): a session whose log did not change
+//    reuses its cached day buckets instead of re-decoding the whole file,
+//    and sessions whose artifact was last written before the window are
+//    skipped entirely. Cached buckets hold only aggregates (≤180 tiny day
+//    entries per session), never the events.
 let usageResultCache = { at: 0, payload: null }
+const sessionUsageCache = new Map()
+
+function mergeUsageDays(target, source, sinceKey) {
+  for (const [dk, s] of source) {
+    if (dk < sinceKey) continue
+    let d = target.get(dk)
+    if (d == null) {
+      d = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, models: {} }
+      target.set(dk, d)
+    }
+    d.input += s.input
+    d.output += s.output
+    d.reasoning += s.reasoning
+    d.cacheRead += s.cacheRead
+    d.cacheWrite += s.cacheWrite
+    d.total += s.total
+    d.steps += s.steps
+    for (const m in s.models) {
+      if (Object.prototype.hasOwnProperty.call(s.models, m)) d.models[m] = (d.models[m] || 0) + s.models[m]
+    }
+  }
+}
 
 async function fetchUsage(ctx) {
   const now = Date.now()
   if (usageResultCache.payload != null && (now - usageResultCache.at) < 5 * 60000) return usageResultCache.payload
   const since = now - MAX_USAGE_DAYS * 86400000
+  const sinceKey = dayKey(since)
   const byDay = new Map()
   const records = await ctx.sessionQuery.listSessions()
   for (const rec of records) {
@@ -173,18 +202,42 @@ async function fetchUsage(ctx) {
     // replays + deep-clones every event of every session and stalls the
     // request for tens of seconds on large logs (and listEvents strips data).
     if (rec == null || rec.header == null || rec.persisted !== true) continue
+    const sessionId = rec.header.id
+    let statInfo = null
+    try {
+      const loc = ctx.sessionPersistence.locate(rec.header)
+      if (loc != null && typeof loc.path === 'string') {
+        const st = fs.statSync(loc.path)
+        statInfo = { mtimeMs: st.mtimeMs, size: st.size }
+      }
+    } catch {
+      statInfo = null
+    }
+    const key = sessionId + '@' + (statInfo != null ? statInfo.mtimeMs + ':' + statInfo.size : 'live')
+    const cached = sessionUsageCache.get(sessionId)
+    if (cached != null && cached.key === key) {
+      mergeUsageDays(byDay, cached.days, sinceKey)
+      continue
+    }
+    // Artifact untouched since before the window: its events can only be
+    // older than the window, so nothing to contribute.
+    if (statInfo != null && statInfo.mtimeMs < since && cached == null) continue
     let events
     try {
-      const read = await ctx.sessionPersistence.readFrom(rec.header.id, 0)
+      const read = await ctx.sessionPersistence.readFrom(sessionId, 0)
       events = read != null ? read.events : undefined
     } catch {
       continue
     }
     if (!Array.isArray(events)) continue
+    // Bound the incremental cache against long-running processes seeing
+    // thousands of distinct sessions (deleted sessions would linger forever).
+    if (sessionUsageCache.size > 1000) sessionUsageCache.clear()
     // The model is not on the usage chunk itself: request/header events carry
     // data.header.config.model and precede their step's chunks, so track the
     // running model while walking the ascending log and attribute each usage
     // total to it.
+    const days = new Map()
     let currentModel = 'unknown'
     for (const ev of events) {
       if (ev == null) continue
@@ -207,10 +260,10 @@ async function fetchUsage(ctx) {
       const total = input + output + reasoning + cacheRead + cacheWrite
       if (!(total > 0)) continue
       const dk = dayKey(ts)
-      let d = byDay.get(dk)
+      let d = days.get(dk)
       if (d == null) {
         d = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, steps: 0, models: {} }
-        byDay.set(dk, d)
+        days.set(dk, d)
       }
       d.input += input
       d.output += output
@@ -221,6 +274,8 @@ async function fetchUsage(ctx) {
       d.steps += 1
       d.models[currentModel] = (d.models[currentModel] || 0) + total
     }
+    sessionUsageCache.set(sessionId, { key, days })
+    mergeUsageDays(byDay, days, sinceKey)
   }
   // Continuous ascending day axis for the fixed 180-day window.
   const series = []
