@@ -1209,6 +1209,13 @@ window.__ModuleLoader__.load({
     function notifySupported() {
       return typeof window !== "undefined" && typeof Notification !== "undefined";
     }
+    function notifyIconUrl() {
+      try {
+        return window.location.origin + "/favicon.svg";
+      } catch {
+        return "/favicon.svg";
+      }
+    }
     function windowFocused() {
       if (typeof document === "undefined") return true;
       return typeof document.hasFocus === "function" ? document.hasFocus() : true;
@@ -1251,7 +1258,7 @@ window.__ModuleLoader__.load({
       if (durationMs != null) parts.push("\u8017\u65f6 " + fmtDurationMs(durationMs));
       var body = parts.length > 0 ? parts.join(" \u00b7 ") : "\u5bf9\u8bdd\u5df2\u5b8c\u6210";
       try {
-        var n = new Notification(title, { body: body, tag: "dsh-turn-" + sessionId + "-" + lastTurn });
+        var n = new Notification(title, { body: body, icon: notifyIconUrl(), tag: "dsh-turn-" + sessionId + "-" + lastTurn });
         n.onclick = function () {
           try { window.focus(); } catch {}
           try { n.close(); } catch {}
@@ -1417,12 +1424,12 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          var n = new Notification("\u6d4b\u8bd5\u901a\u77e5", { body: "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2", tag: "dsh-notify-test" });
+          var n = new Notification("\u6d4b\u8bd5\u901a\u77e5", { body: "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2", icon: notifyIconUrl(), tag: "dsh-notify-test" });
           n.onclick = function () {
             try { window.focus(); } catch {}
             try { n.close(); } catch {}
           };
-          setFb({ kind: "ok", text: "\u5df2\u53d1\u9001\uff0c\u8bf7\u67e5\u770b\u7cfb\u7edf\u901a\u77e5\u4e2d\u5fc3" });
+          setFb({ kind: "ok", text: "\u5df2\u53d1\u9001\u3002\u82e5\u672a\u51fa\u73b0\uff0c\u8bf7\u68c0\u67e5\u201c\u7cfb\u7edf\u8bbe\u7f6e \u2192 \u901a\u77e5\u201d\u4e2d\u8be5\u6d4f\u89c8\u5668\u7684\u901a\u77e5\u6743\u9650" });
         } catch (e) {
           setFb({ kind: "err", text: "\u53d1\u9001\u5931\u8d25\uff1a" + (e && e.message ? e.message : String(e)) });
         }
