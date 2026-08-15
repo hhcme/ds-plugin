@@ -1181,6 +1181,188 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // =========================================================================
+    // 通知: Codex-style completion notifications via the Web Notifications
+    // API. Mode switch (never / unfocused / always) lives in localStorage;
+    // the watcher rides a null-rendering conversation.input.dock entry and
+    // fires when ConversationSnapshot.running flips true→false. The
+    // notification title is the session title and the body is
+    // "project · 耗时 X".
+    // =========================================================================
+
+    var NOTIFY_KEY = "dsh-plugin-balance.notifyMode";
+    function getNotifyMode() {
+      try {
+        var v = window.localStorage.getItem(NOTIFY_KEY);
+        if (v === "never" || v === "always") return v;
+        return "blur";
+      } catch {
+        return "blur";
+      }
+    }
+    function setNotifyMode(mode) {
+      try {
+        window.localStorage.setItem(NOTIFY_KEY, mode);
+      } catch {}
+    }
+    function notifySupported() {
+      return typeof window !== "undefined" && typeof Notification !== "undefined";
+    }
+    function windowFocused() {
+      if (typeof document === "undefined") return true;
+      return typeof document.hasFocus === "function" ? document.hasFocus() : true;
+    }
+    function fmtDurationMs(ms) {
+      if (!(ms >= 0)) return "";
+      var s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return s + " \u79d2";
+      var m = Math.floor(s / 60);
+      var r = s % 60;
+      if (m < 60) return m + " \u5206 " + r + " \u79d2";
+      var h = Math.floor(m / 60);
+      return h + " \u5c0f\u65f6 " + (m % 60) + " \u5206";
+    }
+    function projectNameOf(cwd) {
+      if (cwd == null) return "";
+      var parts = String(cwd).split("/").filter(Boolean);
+      return parts.length > 0 ? parts[parts.length - 1] : String(cwd);
+    }
+    function fireTurnNotification(sessionId, turnTimings, byId) {
+      var mode = getNotifyMode();
+      if (mode === "never") return;
+      if (mode === "blur" && windowFocused()) return;
+      if (!notifySupported() || Notification.permission !== "granted") return;
+      var durationMs = null;
+      var lastTurn = -1;
+      if (turnTimings != null) {
+        turnTimings.forEach(function (t, turn) {
+          if (t != null && t.endTime != null && turn > lastTurn) {
+            lastTurn = turn;
+            durationMs = t.endTime - t.startTime;
+          }
+        });
+      }
+      var summary = byId != null ? byId[sessionId] : null;
+      var title = summary != null && summary.title ? summary.title : (summary != null ? summary.displayTitle : String(sessionId));
+      var project = summary != null ? projectNameOf(summary.cwd) : "";
+      var parts = [];
+      if (project.length > 0) parts.push(project);
+      if (durationMs != null) parts.push("\u8017\u65f6 " + fmtDurationMs(durationMs));
+      var body = parts.length > 0 ? parts.join(" \u00b7 ") : "\u5bf9\u8bdd\u5df2\u5b8c\u6210";
+      try {
+        var n = new Notification(title, { body: body, tag: "dsh-turn-" + sessionId + "-" + lastTurn });
+        n.onclick = function () {
+          try { window.focus(); } catch {}
+          try { n.close(); } catch {}
+        };
+      } catch {}
+    }
+    function requestNotifyPermission(cb) {
+      if (!notifySupported()) {
+        cb("denied");
+        return;
+      }
+      try {
+        var p = Notification.requestPermission();
+        if (p != null && typeof p.then === "function") {
+          p.then(function (r) { cb(r); }).catch(function () { cb(Notification.permission); });
+        } else {
+          setTimeout(function () { cb(Notification.permission); }, 400);
+        }
+      } catch {
+        cb("denied");
+      }
+    }
+
+    // Null-rendering watcher in the session dock: detects the running→idle
+    // edge and fires the notification per the selected mode.
+    function NotifyWatcher(props) {
+      var running = props.useSession(function (s) { return s.running; });
+      var turnTimings = props.useSession(function (s) { return s.turnTimings; });
+      var byId = props.useSessions(function (st) { return st.byId; });
+      var sessionId = props.sessionId;
+      var prevRef = React.useRef(running);
+      React.useEffect(function () {
+        var was = prevRef.current;
+        prevRef.current = running;
+        if (was === true && running === false) {
+          fireTurnNotification(sessionId, turnTimings, byId);
+        }
+      }, [running]);
+      return null;
+    }
+
+    var NOTIFY_MODES = [
+      { id: "never", label: "\u4ece\u4e0d", desc: "\u5bf9\u8bdd\u5b8c\u6210\u65f6\u4e0d\u5f39\u51fa\u901a\u77e5" },
+      { id: "blur", label: "\u672a\u805a\u7126", desc: "\u4ec5\u5f53\u7a97\u53e3\u672a\u805a\u7126\u65f6\u901a\u77e5\uff08\u540e\u53f0\u6807\u7b7e\u9875\u6216\u5207\u5230\u5176\u4ed6\u5e94\u7528\uff09" },
+      { id: "always", label: "\u59cb\u7ec8", desc: "\u5bf9\u8bdd\u5b8c\u6210\u65f6\u603b\u662f\u901a\u77e5" },
+    ];
+
+    function SettingsNotifySection() {
+      var modeRef = React.useState(getNotifyMode());
+      var mode = modeRef[0];
+      var setMode = modeRef[1];
+      var permRef = React.useState(notifySupported() ? Notification.permission : "denied");
+      var perm = permRef[0];
+      var setPerm = permRef[1];
+      var current = null;
+      for (var i = 0; i < NOTIFY_MODES.length; i++) if (NOTIFY_MODES[i].id === mode) current = NOTIFY_MODES[i];
+      var permLine = null;
+      if (perm === "granted") {
+        permLine = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontSize: "11px", color: T.success } },
+          React.createElement("span", { style: { flex: "1" } }, "\u2713 \u6d4f\u89c8\u5668\u901a\u77e5\u5df2\u6388\u6743"),
+          React.createElement("button", {
+            type: "button",
+            onClick: function () {
+              try {
+                var n = new Notification("\u6d4b\u8bd5\u901a\u77e5", { body: "\u9879\u76ee \u00b7 \u8017\u65f6 0 \u79d2" });
+                n.onclick = function () { try { window.focus(); n.close(); } catch {} };
+              } catch {}
+            },
+            style: { border: "1px solid rgba(255,255,255,0.10)", background: T.hoverBg, color: T.label, borderRadius: "8px", padding: "4px 10px", cursor: "pointer", fontSize: "11px", font: "inherit" },
+          }, "\u6d4b\u8bd5\u901a\u77e5"),
+        );
+      } else if (perm === "denied") {
+        permLine = React.createElement("div", { style: { marginTop: "12px", fontSize: "11px", color: T.error } },
+          "\u6d4f\u89c8\u5668\u901a\u77e5\u5df2\u88ab\u62d2\u7edd\uff0c\u8bf7\u5728\u6d4f\u89c8\u5668\u7ad9\u70b9\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u672c\u7ad9\u901a\u77e5");
+      } else {
+        permLine = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontSize: "11px", color: T.tertiary } },
+          React.createElement("span", { style: { flex: "1" } }, "\u6d4f\u89c8\u5668\u901a\u77e5\u672a\u6388\u6743"),
+          React.createElement("button", {
+            type: "button",
+            onClick: function () {
+              requestNotifyPermission(function (r) { setPerm(r); });
+            },
+            style: { border: "none", background: T.brand, color: "#0d1117", borderRadius: "8px", padding: "4px 10px", cursor: "pointer", fontSize: "11px", fontWeight: "600", font: "inherit" },
+          }, "\u8bf7\u6c42\u6388\u6743"),
+        );
+      }
+      return React.createElement("div", { style: pageWrapStyle },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", marginBottom: "14px" } },
+          React.createElement("span", { style: { fontSize: "15px", fontWeight: "700", color: T.label, flex: "1" } }, "\u901a\u77e5"),
+        ),
+        React.createElement("div", { style: Object.assign({}, cardStyle2, { marginTop: "12px" }) },
+          React.createElement("div", { style: { display: "flex", gap: "8px" } },
+            NOTIFY_MODES.map(function (m) {
+              var on = mode === m.id;
+              return React.createElement("button", {
+                key: m.id, type: "button",
+                onClick: function () { setNotifyMode(m.id); setMode(m.id); },
+                style: {
+                  flex: "1 1 0", border: "1px solid " + (on ? T.borderStrong : "rgba(255,255,255,0.10)"),
+                  background: on ? T.hoverBg : "transparent", color: on ? T.label : T.tertiary,
+                  borderRadius: "10px", padding: "7px 10px", cursor: "pointer", fontSize: "12px", font: "inherit",
+                },
+              }, m.label);
+            }),
+          ),
+          React.createElement("div", { style: { marginTop: "10px", fontSize: "11.5px", lineHeight: "18px", color: T.tertiary } },
+            current != null ? current.desc : ""),
+          permLine,
+        ),
+      );
+    }
+
     function apply(ctx) {
       runtime = ctx;
       ctx.effect(function () {
@@ -1210,9 +1392,10 @@ window.__ModuleLoader__.load({
       });
       ctx.slots.inject("conversation.input.dock", function () {
         var disposeBridge = ctx.slots.register({ name: "conversation.input.dock", id: "task-panel-bridge", order: 0 }, Bridge);
+        var disposeNotify = ctx.slots.register({ name: "conversation.input.dock", id: "task-panel-notify", order: 0 }, NotifyWatcher);
         var disposeTodo = ctx.slots.register({ name: "conversation.input.dock", id: "todo", priority: -10 }, function () { return null; });
         var disposeGoal = ctx.slots.register({ name: "conversation.input.dock", id: "goal", priority: -10 }, function () { return null; });
-        return function () { disposeTodo(); disposeGoal(); disposeBridge(); };
+        return function () { disposeTodo(); disposeGoal(); disposeBridge(); disposeNotify(); };
       });
       ctx.slots.inject("conversation.composer.dock", function () {
         var disposeStats = ctx.slots.register({ name: "conversation.composer.dock", id: "stats", priority: -10 }, function () { return null; });
@@ -1220,8 +1403,9 @@ window.__ModuleLoader__.load({
       });
       ctx.slots.inject("settings.section", function () {
         var disposeUsage = ctx.slots.register({ name: "settings.section", id: "usage", order: 25, label: "\u4f7f\u7528\u60c5\u51b5" }, SettingsUsageSection);
+        var disposeNotify = ctx.slots.register({ name: "settings.section", id: "notifications", order: 27, label: "\u901a\u77e5" }, SettingsNotifySection);
         var disposeAbout = ctx.slots.register({ name: "settings.section", id: "about", order: 30, label: "\u5173\u4e8e" }, SettingsAboutSection);
-        return function () { disposeUsage(); disposeAbout(); };
+        return function () { disposeUsage(); disposeNotify(); disposeAbout(); };
       });
       ctx.slots.inject("sidebar.footer.action", function () {
         return ctx.slots.register({ name: "sidebar.footer.action", id: "update-action", order: 10 }, SidebarUpdateAction);
