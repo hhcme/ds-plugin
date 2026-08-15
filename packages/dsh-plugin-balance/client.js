@@ -975,6 +975,39 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // The settings shell draws nav glyphs from a hardcoded id→icon map and
+    // falls back to the settings gear for every unknown section id — the
+    // settings.section registration has no icon field. Patch the rendered
+    // DOM instead: hide the fallback gear (inline style React never resets)
+    // and prepend our own glyph. Insertion is React-safe: we only add one
+    // sibling we own and React's anchors never collide with it; it unmounts
+    // together with the button. A cheap 1s interval keeps it applied across
+    // panel close/open cycles.
+    var NAV_ICONS = {
+      "\u4f7f\u7528\u60c5\u51b5": '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><path d="M3.5 13.5 v-6"/><path d="M8 13.5 V3.5"/><path d="M12.5 13.5 v-4"/></svg>',
+      "\u5173\u4e8e": '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><circle cx="8" cy="8" r="6"/><path d="M8 7.2 v4.3"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor" stroke="none"/></svg>',
+    };
+    function patchSettingsNavIcons() {
+      if (typeof document === "undefined") return;
+      var buttons = document.querySelectorAll("button");
+      for (var i = 0; i < buttons.length; i++) {
+        var b = buttons[i];
+        if (b.getAttribute("data-tp-navicon") === "1") continue;
+        var label = (b.textContent || "").trim();
+        var svgHtml = Object.prototype.hasOwnProperty.call(NAV_ICONS, label) ? NAV_ICONS[label] : null;
+        if (svgHtml == null) continue;
+        var gear = b.querySelector("svg");
+        if (gear == null) continue;
+        b.setAttribute("data-tp-navicon", "1");
+        gear.style.display = "none";
+        var holder = document.createElement("span");
+        holder.setAttribute("aria-hidden", "true");
+        holder.style.cssText = "flex:none;display:inline-flex;color:inherit";
+        holder.innerHTML = svgHtml;
+        b.insertBefore(holder, b.firstChild);
+      }
+    }
+
     // Sidebar foot, right of the Settings row: appears only when a newer
     // DSH version was discovered; click starts the update flow.
     function SidebarUpdateAction() {
@@ -1085,6 +1118,11 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       runtime = ctx;
+      ctx.effect(function () {
+        patchSettingsNavIcons();
+        var stop = runtime.interval(patchSettingsNavIcons, 1000);
+        return stop;
+      });
       // Collapsible-body and grow-from-corner CSS (guarded injection, like the shipped bundles).
       if (typeof document !== "undefined" && document.querySelector("style[data-plugin=dsh-plugin-balance]") == null) {
         var tag = document.createElement("style");
