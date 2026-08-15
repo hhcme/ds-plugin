@@ -271,6 +271,61 @@ async function fetchLatestInfo(ctx) {
 
 let aboutCache = { at: 0, payload: null }
 
+const RELEASES_URL = 'https://github.com/deepseek-ai/deepseek-harness/releases'
+const RELEASES_FEED_URL = 'https://github.com/deepseek-ai/deepseek-harness/releases.atom'
+
+function stripHtml(html) {
+  return String(html)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|ul|ol|pre|blockquote)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '\n\u2022 ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function normTag(tag) {
+  return String(tag).replace(/^v/i, '').replace(/^apps\/cli@/, '').trim()
+}
+
+// Official release notes live in the repo's GitHub releases (no changelog
+// file is published). Parse the Atom feed and match the target version's
+// entry; when the team has not published notes this returns null and the
+// client falls back to a friendly "not published" line + link.
+async function fetchReleaseNotes(version) {
+  if (version == null) return { notesVersion: undefined, notesText: null }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8000)
+  try {
+    const res = await fetch(RELEASES_FEED_URL, { signal: controller.signal })
+    if (!res.ok) return { notesVersion: undefined, notesText: null }
+    const xml = await res.text()
+    const entries = []
+    const entryRe = /<entry>([\s\S]*?)<\/entry>/g
+    let m
+    while ((m = entryRe.exec(xml)) != null) {
+      const block = m[1]
+      const title = (block.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1]
+      const content = (block.match(/<content[^>]*>([\s\S]*?)<\/content>/) || [])[1]
+      if (title != null) entries.push({ tag: title, body: content || '' })
+    }
+    if (entries.length === 0) return { notesVersion: undefined, notesText: null }
+    const target = normTag(version)
+    const hit = entries.find((e) => normTag(e.tag) === target) || entries.find((e) => normTag(e.tag).startsWith(target))
+    if (hit == null) return { notesVersion: undefined, notesText: null }
+    return { notesVersion: version, notesText: stripHtml(hit.body) }
+  } catch {
+    return { notesVersion: undefined, notesText: null }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function fetchAbout(ctx, force) {
   const now = Date.now()
   if (!force && aboutCache.payload != null && (now - aboutCache.at) < 60000) return aboutCache.payload
@@ -280,9 +335,13 @@ async function fetchAbout(ctx, force) {
     const info = await fetchLatestInfo(ctx)
     const latest = info.latest
     const upToDate = latest != null && installed != null ? cmpVersions(installed, latest) >= 0 : true
-    payload = { ok: true, installed, pluginVersion, latest, upToDate, publishedAt: info.publishedAt, checkError: undefined, checkedAt: now }
+    // New version → show the NEW version's notes; up to date → show the
+    // CURRENT version's notes.
+    const notesTarget = !upToDate && latest != null ? latest : installed
+    const notes = await fetchReleaseNotes(notesTarget)
+    payload = { ok: true, installed, pluginVersion, latest, upToDate, publishedAt: info.publishedAt, checkError: undefined, checkedAt: now, notesVersion: notes.notesVersion, notesText: notes.notesText, releasesUrl: RELEASES_URL }
   } catch (error) {
-    payload = { ok: true, installed, pluginVersion, latest: undefined, upToDate: true, publishedAt: undefined, checkError: error && error.message ? error.message : String(error), checkedAt: now }
+    payload = { ok: true, installed, pluginVersion, latest: undefined, upToDate: true, publishedAt: undefined, checkError: error && error.message ? error.message : String(error), checkedAt: now, notesVersion: undefined, notesText: null, releasesUrl: RELEASES_URL }
   }
   aboutCache = { at: now, payload }
   return payload

@@ -1042,6 +1042,28 @@ window.__ModuleLoader__.load({
       );
       // No background card: a plain, centered branded block — logo, official
       // name, current version, then the actions.
+      // 更新内容: a new version exists → that version's notes; otherwise the
+      // current version's. When the official team has not published release
+      // notes, fall back to a friendly line + link (no layout flash: the
+      // block only exists once the about payload is known).
+      var notesBlock = null;
+      if (about != null) {
+        var isNewNotes = !about.upToDate && about.latest != null;
+        var notesTitle = about.notesVersion != null
+          ? (isNewNotes ? "\u65b0\u7248\u672c " : "\u5f53\u524d\u7248\u672c ") + about.notesVersion + " \u66f4\u65b0\u5185\u5bb9"
+          : null;
+        var notesBody = about.notesText != null && about.notesText.length > 0
+          ? React.createElement("div", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: "20px", color: T.secondary } }, about.notesText)
+          : React.createElement("div", { style: { fontSize: "12px", color: T.tertiary, lineHeight: "20px" } },
+            "\u5b98\u65b9\u6682\u672a\u53d1\u5e03\u66f4\u65b0\u65e5\u5fd7\uff0c\u53ef\u5230 ",
+            React.createElement("a", { href: "https://github.com/deepseek-ai/deepseek-harness/releases", target: "_blank", rel: "noreferrer", style: { color: T.brand, textDecoration: "none" } }, "GitHub Releases"),
+            " \u67e5\u770b",
+          );
+        notesBlock = React.createElement("div", { style: { marginTop: "24px", borderTop: "1px solid " + T.divider, paddingTop: "14px", textAlign: "left", maxWidth: "560px", marginLeft: "auto", marginRight: "auto" } },
+          notesTitle != null ? React.createElement("div", { style: { fontSize: "13px", fontWeight: "700", color: T.label, marginBottom: "8px" } }, notesTitle) : null,
+          notesBody,
+        );
+      }
       return React.createElement("div", { style: Object.assign({}, pageWrapStyle, { textAlign: "center", paddingTop: "22px" }) },
         React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" } },
           React.createElement("div", { style: { width: "48px", height: "48px", borderRadius: "14px", background: "rgba(77,141,255,0.14)", border: "1px solid rgba(77,141,255,0.28)", display: "grid", placeItems: "center", color: T.brand } },
@@ -1057,6 +1079,7 @@ window.__ModuleLoader__.load({
         ),
         infoLine,
         buttons,
+        notesBlock,
       );
     }
 
